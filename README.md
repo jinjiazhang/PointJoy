@@ -83,6 +83,7 @@ npm run check
 
 ## 代码位置
 
+- [交互设计](docs/design/01-交互与业务设计.md)、[接口协议设计](docs/design/02-接口协议.md)、[数据存储设计](docs/design/03-数据存储与一致性.md)：开发前设计；本版实现差异见上方说明。
 - [前端页面](apps/mini/src/pages/index/index.vue)：页面交互和响应式样式。
 - [前端状态及请求](apps/mini/src/store.ts)：会话、切群、请求隔离和数据刷新。
 - [接口控制器](apps/api/src/controller.ts)：鉴权、字段验证及路由。
