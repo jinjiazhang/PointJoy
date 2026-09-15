@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+model User {
+  id          String @id @default(uuid()) @db.Uuid
+  displayName String @db.VarChar(40)
+  avatar      String @default("blue")
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  @@map("users")
+}
+model Session {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @db.Uuid
+  tokenHash String @unique
+  expiresAt DateTime @db.Timestamptz
+  @@map("sessions")
+}
+model Group {
+  id            String @id @default(uuid()) @db.Uuid
+  name          String @db.VarChar(30)
+  description   String @default("") @db.VarChar(200)
+  color         String @default("blue")
+  ownerMemberId String @db.Uuid
+  version       Int @default(1)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+  @@map("groups")
+}
+model Member {
+  id        String @id @default(uuid()) @db.Uuid
+  groupId   String @db.Uuid
+  userId    String @db.Uuid
+  role      String @default("MEMBER")
+  version   Int @default(1)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  @@unique([groupId, userId])
+  @@unique([groupId, id])
+  @@index([userId])
+  @@map("members")
+}
+model Account {
+  id        String @id @default(uuid()) @db.Uuid
+  groupId   String @db.Uuid
+  memberId  String @db.Uuid
+  balance   Int @default(0)
+  version   Int @default(0)
+  updatedAt DateTime @updatedAt @db.Timestamptz
+  @@unique([groupId, memberId])
+  @@map("point_accounts")
+}
+model Ledger {
+  id            String @id @default(uuid()) @db.Uuid
+  groupId       String @db.Uuid
+  memberId      String @db.Uuid
+  type          String
+  delta         Int
+  balanceAfter  Int
+  accountVersion Int
+  reason        String @db.VarChar(200)
+  actorMemberId String @db.Uuid
+  orderId       String? @db.Uuid
+  reversalOfId  String? @unique @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  @@unique([groupId, id])
+  @@unique([groupId, memberId, accountVersion])
+  @@unique([orderId, type])
+  @@index([groupId, memberId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("point_ledger")
+}
+model Reward {
+  id                      String @id @default(uuid()) @db.Uuid
+  groupId                 String @db.Uuid
+  name                    String @db.VarChar(50)
+  description             String @default("") @db.VarChar(2000)
+  art                     String @default("gift")
+  type                    String
+  fulfillmentInstructions String @db.VarChar(500)
+  costPoints              Int
+  stockAvailable          Int @default(0)
+  status                  String @default("DRAFT")
+  version                 Int @default(1)
+  stockVersion            Int @default(0)
+  createdAt               DateTime @default(now()) @db.Timestamptz
+  updatedAt               DateTime @updatedAt @db.Timestamptz
+  @@unique([groupId, id])
+  @@index([groupId, status, createdAt(sort: Desc)])
+  @@map("rewards")
+}
+model StockEntry {
+  id            String @id @default(uuid()) @db.Uuid
+  groupId       String @db.Uuid
+  rewardId      String @db.Uuid
+  type          String
+  delta         Int
+  stockAfter    Int
+  stockVersion  Int
+  actorMemberId String @db.Uuid
+  orderId       String? @db.Uuid
+  reason        String @db.VarChar(200)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  @@unique([groupId, rewardId, stockVersion])
+  @@unique([orderId, type])
+  @@map("stock_ledger")
+}
+model Redemption {
+  id                   String @id @default(uuid()) @db.Uuid
+  groupId              String @db.Uuid
+  memberId             String @db.Uuid
+  rewardId             String @db.Uuid
+  status               String @default("PENDING")
+  costPoints           Int
+  rewardSnapshot       Json
+  version              Int @default(1)
+  fulfilledAt          DateTime? @db.Timestamptz
+  fulfilledByMemberId  String? @db.Uuid
+  fulfillmentNote      String?
+  canceledAt           DateTime? @db.Timestamptz
+  canceledByMemberId   String? @db.Uuid
+  cancelReason         String?
+  createdAt            DateTime @default(now()) @db.Timestamptz
+  updatedAt            DateTime @updatedAt @db.Timestamptz
+  @@unique([groupId, id])
+  @@index([groupId, memberId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([groupId, status, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("redemptions")
+}
+model Invitation {
+  id              String @id @default(uuid()) @db.Uuid
+  groupId         String @db.Uuid
+  creatorMemberId String @db.Uuid
+  codeHash        String @unique
+  expiresAt       DateTime @db.Timestamptz
+  maxUses         Int @default(100)
+  uses            Int @default(0)
+  revokedAt       DateTime? @db.Timestamptz
+  createdAt       DateTime @default(now()) @db.Timestamptz
+  @@unique([groupId, id])
+  @@map("invitations")
+}
+model Application {
+  id                String @id @default(uuid()) @db.Uuid
+  groupId           String @db.Uuid
+  invitationId      String @db.Uuid
+  applicantUserId   String @db.Uuid
+  status            String @default("PENDING")
+  decisionReason    String?
+  decidedByMemberId String? @db.Uuid
+  decidedAt         DateTime? @db.Timestamptz
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  @@index([groupId, status])
+  @@map("join_applications")
+}
+model Operation {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @db.Uuid
+  scope     String
+  key       String @db.Uuid
+  hash      String
+  response  Json?
+  createdAt DateTime @default(now()) @db.Timestamptz
+  @@unique([userId, scope, key])
+  @@map("idempotency_records")
+}
+model Audit {
+  id            String @id @default(uuid()) @db.Uuid
+  groupId       String @db.Uuid
+  actorMemberId String @db.Uuid
+  action        String
+  targetId      String @db.Uuid
+  reason        String?
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  @@index([groupId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

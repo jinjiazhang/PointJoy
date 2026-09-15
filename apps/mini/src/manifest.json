@@ -1,0 +1,24 @@
+{
+  "name": "积乐圈 PointJoy",
+  "appid": "",
+  "description": "让每一份努力，都有奖励",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "vueVersion": "3",
+  "h5": {
+    "title": "积乐圈 · PointJoy",
+    "router": {
+      "mode": "hash"
+    }
+  },
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  },
+  "uniStatistics": {
+    "enable": false
+  }
+}
