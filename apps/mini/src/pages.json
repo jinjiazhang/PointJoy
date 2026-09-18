@@ -17,6 +17,15 @@
         "navigationBarBackgroundColor": "#f6f7fb",
         "navigationBarTextStyle": "black"
       }
+    },
+    {
+      "path": "pages/activity-history/index",
+      "style": {
+        "navigationStyle": "default",
+        "navigationBarTitleText": "参与记录",
+        "navigationBarBackgroundColor": "#f6f7fb",
+        "navigationBarTextStyle": "black"
+      }
     }
   ],
   "globalStyle": {

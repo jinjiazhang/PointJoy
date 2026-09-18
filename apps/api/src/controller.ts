@@ -1,4 +1,4 @@
-import { activityAction,activityDay } from './activities';
+import { activityAction,activityDay,definitions,entries as participationEntries } from './activities';
 import { All, Controller, Req, Res } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -107,19 +107,25 @@ export class ApiController {
     return paged(await db.redemption.findMany({where:{groupId:gid,...(mine?{memberId:c.member.id}:{}),...(status?{status}:{})},...page(req.query)}),Number(req.query.limit||30));
   }
   if(method==='GET'&&p[2]==='audit-logs'){requireAdmin(c);return paged(await db.audit.findMany({where:{groupId:gid},...page(req.query)}),Number(req.query.limit||30));}
+  if(method==='GET'&&p[2]==='me'&&p[3]==='participations'&&p.length===4){
+   const kind=z.enum(['DAILY','LIMITED']).parse(req.query.kind||'DAILY');
+   const rows=await participationEntries(db,gid,kind,{...page(req.query),where:{memberId:c.member.id}});
+   const activities=await definitions(db,gid,kind,{where:{id:{in:rows.map((r:any)=>r.activityId)}}});
+   return paged(rows.map((r:any)=>({...r,activity:activities.find((a:any)=>a.id===r.activityId)})),Number(req.query.limit||30));
+  }
   if(method==='GET'&&p[2]==='activity-progress'&&p.length===3){
    requireAdmin(c);
    const kind=z.enum(['DAILY','LIMITED']).parse(req.query.kind||'DAILY');
    const day=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse(req.query.date||activityDay(new Date()));
    const start=new Date(day+'T00:00:00+08:00');if(!Number.isFinite(start.getTime())||activityDay(start)!==day)fail('VALIDATION_ERROR','日期无效',400);
    const end=new Date(start.getTime()+86400000);
-   const activities=await db.activity.findMany({where:{groupId:gid,kind,...(kind==='DAILY'?{createdAt:{lt:end}}:{})},orderBy:{createdAt:'desc'}});
+   const activities=await definitions(db,gid,kind,{where:kind==='DAILY'?{createdAt:{lt:end},OR:[{closedAt:null},{closedAt:{gte:start}}]}:{}});
    const members=await db.member.findMany({where:{groupId:gid,...(kind==='DAILY'?{createdAt:{lt:end}}:{})},orderBy:{createdAt:'asc'}});
    const users=await db.user.findMany({where:{id:{in:members.map(m=>m.userId)}}});
-   const claims=await db.activityClaim.findMany({where:{groupId:gid,activityId:{in:activities.map(a=>a.id)},period:kind==='DAILY'?day:'ONCE'},orderBy:{updatedAt:'desc'}});
+   const claims=await participationEntries(db,gid,kind,{where:{[kind==='DAILY'?'routineId':'eventId']:{in:activities.map((a:any)=>a.id)},...(kind==='DAILY'?{occurrenceDate:new Date(day+'T00:00:00Z')}:{})}});
    return {day,kind,serverTime:new Date().toISOString(),activities,members:members.map(m=>({id:m.id,displayName:users.find(u=>u.id===m.userId)?.displayName||'成员',createdAt:m.createdAt})),claims};
   }
-  if(method==='POST'&&((p[2]==='activities'&&(p.length===3||(p.length===5&&['claim','close'].includes(p[4]))))||(p[2]==='activity-claims'&&p.length===5&&['submit','review'].includes(p[4]))))return write((tx:any)=>activityAction(tx,uid,gid,p,b));
+  if(method==='POST'&&((['routines','events'].includes(p[2])&&(p.length===3||(p.length===5&&['claim','close'].includes(p[4]))))||(['daily-entries','event-entries'].includes(p[2])&&p.length===5&&['submit','review'].includes(p[4]))))return write((tx:any)=>activityAction(tx,uid,gid,p,b));
   if(p[2]==='dashboard'&&p.length===3&&method==='GET'){
     const members=await db.member.findMany({where:{groupId:gid}});const users=await db.user.findMany({where:{id:{in:members.map(m=>m.userId)}}});
     const name=(mid:string)=>users.find(u=>u.id===members.find(m=>m.id===mid)?.userId)?.displayName||'成员';
@@ -132,12 +138,12 @@ export class ApiController {
      c.admin?db.application.findMany({where:{groupId:gid,status:'PENDING'},orderBy:{createdAt:'asc'}}):Promise.resolve([]),
      c.admin?db.audit.findMany({where:{groupId:gid},orderBy:{createdAt:'desc'},take:50}):Promise.resolve([])
     ]);
-    const activities=await db.activity.findMany({where:{groupId:gid},orderBy:{createdAt:'desc'},take:100});
-    const activityClaims=await db.activityClaim.findMany({where:{groupId:gid,...(!c.admin?{memberId:c.member.id}:{})},orderBy:{updatedAt:'desc'},take:200});
+    const activities=await definitions(db,gid,undefined,{take:100});
+    const activityClaims=await participationEntries(db,gid,undefined,{where:!c.admin?{memberId:c.member.id}:{},take:200});
     const applicants=await db.user.findMany({where:{id:{in:applications.map(a=>a.applicantUserId)}}});
     return {group:c.group,membership:{...c.member,effectiveRole:c.role},admin:c.admin,account,memberCount:members.length,
       members:c.admin?members.map(m=>({...m,displayName:name(m.id),avatar:users.find(u=>u.id===m.userId)?.avatar,effectiveRole:c.group.ownerMemberId===m.id?'OWNER':m.role,account:accounts.find(a=>a.memberId===m.id)})):[],
-      activityDate:activityDay(new Date()),serverTime:new Date().toISOString(),activities,activityClaims:activityClaims.map(x=>({...x,memberName:name(x.memberId)})),rewards,entries:entries.map(e=>({...e,operatorName:name(e.actorMemberId)})),orders:orders.map(o=>({...o,memberName:name(o.memberId)})),
+      activityDate:activityDay(new Date()),serverTime:new Date().toISOString(),activities,activityClaims:activityClaims.map((x:any)=>({...x,memberName:name(x.memberId)})),rewards,entries:entries.map(e=>({...e,operatorName:name(e.actorMemberId)})),orders:orders.map(o=>({...o,memberName:name(o.memberId)})),
       applications:applications.map(a=>({...a,displayName:applicants.find(u=>u.id===a.applicantUserId)?.displayName})),audits:audits.map(a=>({...a,operatorName:name(a.actorMemberId)}))};
   }
   if(p[2]==='members'&&p[4]==='ledger'&&method==='GET'){

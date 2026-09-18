@@ -178,10 +178,7 @@ model Audit {
   @@map("audit_logs")
 }
 
-model Activity {
- kind String
- startsAt DateTime? @db.Timestamptz
- endsAt DateTime? @db.Timestamptz
+model DailyRoutine {
  id String @id @default(uuid()) @db.Uuid
  groupId String @db.Uuid
  title String @db.VarChar(60)
@@ -190,25 +187,65 @@ model Activity {
  status String @default("ACTIVE")
  creatorMemberId String @db.Uuid
  createdAt DateTime @default(now()) @db.Timestamptz
+ closedAt DateTime? @db.Timestamptz
  @@unique([groupId,id])
- @@map("activities")
+ @@map("daily_routines")
 }
-model ActivityClaim {
- period String @db.VarChar(10)
- expiresAt DateTime @db.Timestamptz
+model Event {
  id String @id @default(uuid()) @db.Uuid
  groupId String @db.Uuid
- activityId String @db.Uuid
+ title String @db.VarChar(60)
+ description String @db.VarChar(2000)
+ points Int
+ status String @default("ACTIVE")
+ creatorMemberId String @db.Uuid
+ createdAt DateTime @default(now()) @db.Timestamptz
+ closedAt DateTime? @db.Timestamptz
+ @@unique([groupId,id])
+ startsAt DateTime @db.Timestamptz
+ endsAt DateTime @db.Timestamptz
+ @@map("events")
+}
+model DailyEntry {
+ id String @id @default(uuid()) @db.Uuid
+ groupId String @db.Uuid
  memberId String @db.Uuid
+ awardPoints Int
  status String @default("CLAIMED")
  submission String @default("") @db.VarChar(1000)
  reviewReason String @default("") @db.VarChar(200)
  reviewerMemberId String? @db.Uuid
  ledgerId String? @unique @db.Uuid
  version Int @default(1)
+ expiresAt DateTime @db.Timestamptz
+ submittedAt DateTime? @db.Timestamptz
+ reviewedAt DateTime? @db.Timestamptz
  createdAt DateTime @default(now()) @db.Timestamptz
  updatedAt DateTime @updatedAt @db.Timestamptz
- @@unique([activityId,memberId,period])
  @@index([groupId,status])
- @@map("activity_claims")
+ routineId String @db.Uuid
+ occurrenceDate DateTime @db.Date
+ @@unique([routineId,memberId,occurrenceDate])
+ @@map("daily_entries")
+}
+model EventEntry {
+ id String @id @default(uuid()) @db.Uuid
+ groupId String @db.Uuid
+ memberId String @db.Uuid
+ awardPoints Int
+ status String @default("CLAIMED")
+ submission String @default("") @db.VarChar(1000)
+ reviewReason String @default("") @db.VarChar(200)
+ reviewerMemberId String? @db.Uuid
+ ledgerId String? @unique @db.Uuid
+ version Int @default(1)
+ expiresAt DateTime @db.Timestamptz
+ submittedAt DateTime? @db.Timestamptz
+ reviewedAt DateTime? @db.Timestamptz
+ createdAt DateTime @default(now()) @db.Timestamptz
+ updatedAt DateTime @updatedAt @db.Timestamptz
+ @@index([groupId,status])
+ eventId String @db.Uuid
+ @@unique([eventId,memberId])
+ @@map("event_entries")
 }
