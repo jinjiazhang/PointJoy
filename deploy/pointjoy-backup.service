@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up PointJoy database
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+UMask=0077
+ExecStart=/usr/local/bin/pointjoy-backup

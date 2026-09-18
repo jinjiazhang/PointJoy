@@ -1,12 +1,12 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { HttpException } from '@nestjs/common';
 import { createHash, randomUUID, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-export const db = new PrismaClient();
+export const db = new PrismaClient({omit:{user:{wechatOpenId:true}}});
 export type Tx = Prisma.TransactionClient;
 export const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 export function fail(code: string, message: string, status = 409): never { throw new HttpException({ code, message }, status); }
 export function stable(value: any): string { if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`; if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(k => JSON.stringify(k)+':'+stable(value[k])).join(',')}}`; return JSON.stringify(value); }
-export async function context(tx: Tx | PrismaClient, uid: string, gid: string, lock: 'share'|'exclusive'|null = null) {
+export async function context(tx: Tx | typeof db, uid: string, gid: string, lock: 'share'|'exclusive'|null = null) {
   if (lock === 'share') await tx.$queryRaw`SELECT id FROM groups WHERE id=${gid}::uuid FOR SHARE`;
   if (lock === 'exclusive') await tx.$queryRaw`SELECT id FROM groups WHERE id=${gid}::uuid FOR UPDATE`;
   const group = await tx.group.findUnique({where:{id:gid}});

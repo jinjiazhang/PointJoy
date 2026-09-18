@@ -1,6 +1,9 @@
+import { activityAction,activityDay } from './activities';
 import { All, Controller, Req, Res } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { exchangeCode } from './wechat';
+import { saveAvatar } from './avatar';
 import { db, hash, context, mutation, fail, requireAdmin, other, audit, points, stock, lockReward, createGroup, redeem, orderAction } from './domain';
 const id=z.string().uuid();const text=(n:number)=>z.string().trim().min(1).max(n);const integer=z.number().int().min(1).max(2_000_000_000);
 const reason=text(200);const version=z.number().int().min(1);
@@ -28,6 +31,16 @@ export class ApiController {
  async dispatch(req:any):Promise<any>{
   const path=req.path.replace(/^\/api\/v1\/?/,'').replace(/\/$/,'');const p=path.split('/');const method=req.method;const b=req.body||{};
   if(path==='health'&&method==='GET'){await db.$queryRaw`SELECT 1`;return {status:'ok',mode:process.env.DEMO_AUTH==='true'?'demo':'production'};}
+  if(path==='auth/config'&&method==='GET')return {mode:process.env.DEMO_AUTH==='true'?'demo':'wechat'};
+  if(path==='auth/wechat'&&method==='POST'){
+   rate('wechat:'+req.ip,20);
+   const input=z.object({code:text(256)}).strict().parse(b);
+   const wechatOpenId=await exchangeCode(input.code);
+   const user=await db.user.upsert({where:{wechatOpenId},update:{},create:{wechatOpenId,displayName:'伙伴'+randomBytes(3).toString('hex')},select:{id:true,displayName:true,avatar:true,createdAt:true}});
+   const token=randomBytes(32).toString('hex');
+   await db.session.create({data:{userId:user.id,tokenHash:hash(token),expiresAt:new Date(Date.now()+86400000)}});
+   return {accessToken:token,user};
+  }
   if(path==='auth/demo-users'&&method==='GET'){if(process.env.DEMO_AUTH!=='true')fail('RESOURCE_NOT_FOUND','接口不存在',404);return db.user.findMany({orderBy:{createdAt:'asc'}});}
   if(path==='auth/demo'&&method==='POST'){
    if(process.env.DEMO_AUTH!=='true')fail('RESOURCE_NOT_FOUND','接口不存在',404);rate(req.ip,30);
@@ -35,9 +48,18 @@ export class ApiController {
    const token=randomBytes(32).toString('hex');await db.session.create({data:{userId:uid,tokenHash:hash(token),expiresAt:new Date(Date.now()+86400000)}});return {accessToken:token,user};
   }
   const token=(req.headers.authorization||'').replace(/^Bearer /,'');const session=await db.session.findUnique({where:{tokenHash:hash(token)}});
-  if(!session||session.expiresAt<new Date())fail('UNAUTHENTICATED','请重新选择体验账号',401);const uid=session.userId;rate(uid);
+  if(!session||session.expiresAt<new Date())fail('UNAUTHENTICATED','登录已过期，请重新登录',401);const uid=session.userId;rate(uid);
   const write=(fn:any)=>mutation(uid,method+':'+path,req.headers['idempotency-key'],b,fn);
   if(path==='me'&&method==='GET')return db.user.findUnique({where:{id:uid}});
+  if(path==='me'&&method==='PATCH'){
+   const data=z.object({displayName:text(24)}).strict().parse(b);
+   return write((tx:any)=>tx.user.update({where:{id:uid},data}));
+  }
+  if(path==='me/avatar'&&method==='POST'){
+   rate('avatar:'+uid,10);
+   const data=z.object({imageBase64:z.string().min(1).max(2800000)}).strict().parse(b);
+   return write(async(tx:any)=>{const avatar=await saveAvatar(data.imageBase64);return tx.user.update({where:{id:uid},data:{avatar}});});
+  }
   if(path==='auth/logout'&&method==='POST')return write(async(tx:any)=>{await tx.session.delete({where:{id:session.id}});return {loggedOut:true};});
   if(path==='groups'&&method==='GET'){
     const memberships=await db.member.findMany({where:{userId:uid},orderBy:{createdAt:'asc'}});
@@ -85,6 +107,19 @@ export class ApiController {
     return paged(await db.redemption.findMany({where:{groupId:gid,...(mine?{memberId:c.member.id}:{}),...(status?{status}:{})},...page(req.query)}),Number(req.query.limit||30));
   }
   if(method==='GET'&&p[2]==='audit-logs'){requireAdmin(c);return paged(await db.audit.findMany({where:{groupId:gid},...page(req.query)}),Number(req.query.limit||30));}
+  if(method==='GET'&&p[2]==='activity-progress'&&p.length===3){
+   requireAdmin(c);
+   const kind=z.enum(['DAILY','LIMITED']).parse(req.query.kind||'DAILY');
+   const day=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse(req.query.date||activityDay(new Date()));
+   const start=new Date(day+'T00:00:00+08:00');if(!Number.isFinite(start.getTime())||activityDay(start)!==day)fail('VALIDATION_ERROR','日期无效',400);
+   const end=new Date(start.getTime()+86400000);
+   const activities=await db.activity.findMany({where:{groupId:gid,kind,...(kind==='DAILY'?{createdAt:{lt:end}}:{})},orderBy:{createdAt:'desc'}});
+   const members=await db.member.findMany({where:{groupId:gid,...(kind==='DAILY'?{createdAt:{lt:end}}:{})},orderBy:{createdAt:'asc'}});
+   const users=await db.user.findMany({where:{id:{in:members.map(m=>m.userId)}}});
+   const claims=await db.activityClaim.findMany({where:{groupId:gid,activityId:{in:activities.map(a=>a.id)},period:kind==='DAILY'?day:'ONCE'},orderBy:{updatedAt:'desc'}});
+   return {day,kind,serverTime:new Date().toISOString(),activities,members:members.map(m=>({id:m.id,displayName:users.find(u=>u.id===m.userId)?.displayName||'成员',createdAt:m.createdAt})),claims};
+  }
+  if(method==='POST'&&((p[2]==='activities'&&(p.length===3||(p.length===5&&['claim','close'].includes(p[4]))))||(p[2]==='activity-claims'&&p.length===5&&['submit','review'].includes(p[4]))))return write((tx:any)=>activityAction(tx,uid,gid,p,b));
   if(p[2]==='dashboard'&&p.length===3&&method==='GET'){
     const members=await db.member.findMany({where:{groupId:gid}});const users=await db.user.findMany({where:{id:{in:members.map(m=>m.userId)}}});
     const name=(mid:string)=>users.find(u=>u.id===members.find(m=>m.id===mid)?.userId)?.displayName||'成员';
@@ -97,10 +132,12 @@ export class ApiController {
      c.admin?db.application.findMany({where:{groupId:gid,status:'PENDING'},orderBy:{createdAt:'asc'}}):Promise.resolve([]),
      c.admin?db.audit.findMany({where:{groupId:gid},orderBy:{createdAt:'desc'},take:50}):Promise.resolve([])
     ]);
+    const activities=await db.activity.findMany({where:{groupId:gid},orderBy:{createdAt:'desc'},take:100});
+    const activityClaims=await db.activityClaim.findMany({where:{groupId:gid,...(!c.admin?{memberId:c.member.id}:{})},orderBy:{updatedAt:'desc'},take:200});
     const applicants=await db.user.findMany({where:{id:{in:applications.map(a=>a.applicantUserId)}}});
     return {group:c.group,membership:{...c.member,effectiveRole:c.role},admin:c.admin,account,memberCount:members.length,
       members:c.admin?members.map(m=>({...m,displayName:name(m.id),avatar:users.find(u=>u.id===m.userId)?.avatar,effectiveRole:c.group.ownerMemberId===m.id?'OWNER':m.role,account:accounts.find(a=>a.memberId===m.id)})):[],
-      rewards,entries:entries.map(e=>({...e,operatorName:name(e.actorMemberId)})),orders:orders.map(o=>({...o,memberName:name(o.memberId)})),
+      activityDate:activityDay(new Date()),serverTime:new Date().toISOString(),activities,activityClaims:activityClaims.map(x=>({...x,memberName:name(x.memberId)})),rewards,entries:entries.map(e=>({...e,operatorName:name(e.actorMemberId)})),orders:orders.map(o=>({...o,memberName:name(o.memberId)})),
       applications:applications.map(a=>({...a,displayName:applicants.find(u=>u.id===a.applicantUserId)?.displayName})),audits:audits.map(a=>({...a,operatorName:name(a.actorMemberId)}))};
   }
   if(p[2]==='members'&&p[4]==='ledger'&&method==='GET'){

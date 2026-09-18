@@ -12,9 +12,9 @@
     }
   },
   "mp-weixin": {
-    "appid": "",
+    "appid": "wx5c24ed9df4175b79",
     "setting": {
-      "urlCheck": false
+      "urlCheck": true
     },
     "usingComponents": true
   },

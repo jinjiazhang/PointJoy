@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+backup_dir=/var/backups/pointjoy
+backup_file="$backup_dir/pointjoy-$(date +%Y%m%d-%H%M%S).dump"
+pg_dump -Fc pointjoy -f "$backup_file.tmp"
+mv "$backup_file.tmp" "$backup_file"
+find "$backup_dir" -maxdepth 1 -type f -name 'pointjoy-*.dump' -mtime +7 -delete

@@ -7,6 +7,7 @@ datasource db {
 }
 model User {
   id          String @id @default(uuid()) @db.Uuid
+  wechatOpenId String? @unique @db.VarChar(128)
   displayName String @db.VarChar(40)
   avatar      String @default("blue")
   createdAt   DateTime @default(now()) @db.Timestamptz
@@ -175,4 +176,39 @@ model Audit {
   createdAt     DateTime @default(now()) @db.Timestamptz
   @@index([groupId, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+model Activity {
+ kind String
+ startsAt DateTime? @db.Timestamptz
+ endsAt DateTime? @db.Timestamptz
+ id String @id @default(uuid()) @db.Uuid
+ groupId String @db.Uuid
+ title String @db.VarChar(60)
+ description String @db.VarChar(2000)
+ points Int
+ status String @default("ACTIVE")
+ creatorMemberId String @db.Uuid
+ createdAt DateTime @default(now()) @db.Timestamptz
+ @@unique([groupId,id])
+ @@map("activities")
+}
+model ActivityClaim {
+ period String @db.VarChar(10)
+ expiresAt DateTime @db.Timestamptz
+ id String @id @default(uuid()) @db.Uuid
+ groupId String @db.Uuid
+ activityId String @db.Uuid
+ memberId String @db.Uuid
+ status String @default("CLAIMED")
+ submission String @default("") @db.VarChar(1000)
+ reviewReason String @default("") @db.VarChar(200)
+ reviewerMemberId String? @db.Uuid
+ ledgerId String? @unique @db.Uuid
+ version Int @default(1)
+ createdAt DateTime @default(now()) @db.Timestamptz
+ updatedAt DateTime @updatedAt @db.Timestamptz
+ @@unique([activityId,memberId,period])
+ @@index([groupId,status])
+ @@map("activity_claims")
 }
