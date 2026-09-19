@@ -36,7 +36,7 @@ let localAuth=false
 // #ifdef H5
 localAuth=import.meta.env.DEV&&import.meta.env.VITE_LOCAL_AUTH==='true'
 // #endif
-const title=computed(()=>({login:'给努力一点回应',profile:'完善个人资料',contexts:'我的家庭',invite:'接受家庭邀请',pin:'请家长验证',recovery:'确认这次操作',account:'我的账号',privacy:'隐私与数据'}[props.page]||'积乐圈'))
+const title=computed(()=>({login:'给努力一点回应',profile:'完善资料',contexts:'我的家庭',invite:'接受家庭邀请',pin:'请家长验证',recovery:'确认操作',account:'我的账号',privacy:'隐私与数据'}[props.page]||'积乐圈'))
 const {loading,error,busy,reload,act,session}=usePage(props.page,load,'public')
 async function load(){
  if(['login','privacy','profile','account'].includes(props.page))privacy.value=await get('/public/privacy')
@@ -89,7 +89,7 @@ async function download(req:PrivacyRequest){await act(async()=>{const grant=awai
 // Native nickname recommendations may only update on blur/form submit.
 const canProfileSave=computed(()=>!loading.value&&!wechatPrivacyNeeded.value&&avatar.value.length===1&&avatar.value[0].status==='READY')
 </script>
-<template><AppShell :title="page==='login'?'':title" :public-page="['login','profile','pin'].includes(page)" :back="!['login','profile','contexts','pin'].includes(page)" :loading="loading" :error="error" @retry="reload">
+<template><AppShell :title="page==='login'?'微信登录':title" :public-page="['login','profile','pin'].includes(page)" :back="!['login','profile','contexts','pin'].includes(page)" :loading="loading" :error="error" @retry="reload">
 <template v-if="page==='login'">
 <view class="welcome-screen"><view class="welcome-art"><view class="welcome-halo halo-one"/><view class="welcome-halo halo-two"/><view class="welcome-orb"><view class="welcome-symbol"><AppIcon name="sparkle" tone="blue" size="100rpx"/></view></view><view class="welcome-floating welcome-complete"><view class="welcome-mini-icon"><AppIcon name="check" tone="green" size="30rpx"/></view><text>完成一个小目标</text></view><view class="welcome-floating welcome-wish"><view class="welcome-mini-icon wish-icon"><AppIcon name="gift" tone="blue" size="32rpx"/></view><text>离心愿近一点</text></view></view>
 <text class="welcome-eyebrow">给努力一点回应</text><text class="welcome-title">小小努力，{{'\n'}}大大期待。</text><text class="welcome-copy">一起约定日常，记录每一点成长。{{'\n'}}把孩子的努力，变成可以期待的奖励。</text>

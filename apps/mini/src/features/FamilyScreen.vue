@@ -16,7 +16,7 @@ import type {Child,Account,PageResult,UploadItem,Guardian,Application,Invitation
 const props=defineProps<{page:string;query:Record<string,string>}>()
 const children=ref<Child[]>([]),child=ref<Child|null>(null),account=ref<Account|null>(null),wish=ref<Wish|null>(null),nickname=ref(''),ageBand=ref(''),avatar=ref<UploadItem[]>([]),childDraftId=ref(''),guardians=ref<Guardian[]>([]),applications=ref<Application[]>([]),invitations=ref<Invitation[]>([]),bindingInvites=ref<Invitation[]>([]),inviteToken=ref(''),inviteExpires=ref(''),invitePurpose=ref(''),tab=ref(props.query.tab||'guardians'),reason=ref(''),pin=ref(''),pendingAction=ref(''),selectedId=ref(''),selectedVersion=ref(0),syncProfile=ref(false),archive=ref<ArchiveCheck|null>(null),retain=ref(false),name=ref(''),cursor=ref<string|null>(null),hasMore=ref(false),includeArchived=ref(false)
 const ages=['不填写','4岁以下','4—6岁','7—9岁','10—12岁','13岁及以上'];const ageValues=['','UNDER_4','AGE_4_6','AGE_7_9','AGE_10_12','OVER_12']
-const titles:Record<string,string>={family:'我们的家庭',child:'孩子档案',childEdit:props.query.id?'编辑孩子档案':'添加一位小朋友',guardians:'一起照顾这个家',settings:'家庭设置'}
+const titles:Record<string,string>={family:'家庭',child:'孩子档案',childEdit:props.query.id?'编辑孩子档案':'添加孩子',guardians:'共同家长',settings:'家庭设置'}
 const {loading,error,busy,reload,act,session}=usePage(props.page,load,'guardian')
 const owner=computed(()=>session.isOwner)
 async function load(){
