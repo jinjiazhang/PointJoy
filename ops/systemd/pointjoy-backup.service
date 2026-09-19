@@ -1,0 +1,8 @@
+[Unit]
+Description=Encrypted PointJoy database and private media backup
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/pointjoy/ops/backup.sh
+Nice=10
+IOSchedulingClass=idle

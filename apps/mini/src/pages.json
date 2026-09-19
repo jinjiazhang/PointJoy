@@ -1,0 +1,236 @@
+{
+  "pages": [
+    {
+      "path": "pages/auth/login",
+      "style": {
+        "navigationBarTitleText": "微信登录",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/profile",
+      "style": {
+        "navigationBarTitleText": "完善资料",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/contexts",
+      "style": {
+        "navigationBarTitleText": "我的家庭",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/invite",
+      "style": {
+        "navigationBarTitleText": "接受邀请",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/pin",
+      "style": {
+        "navigationBarTitleText": "家长验证",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/recovery",
+      "style": {
+        "navigationBarTitleText": "确认操作",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/account",
+      "style": {
+        "navigationBarTitleText": "我的账号",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/auth/privacy",
+      "style": {
+        "navigationBarTitleText": "隐私与数据",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/home",
+      "style": {
+        "navigationBarTitleText": "家庭首页",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/todos",
+      "style": {
+        "navigationBarTitleText": "家长待办",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/plans",
+      "style": {
+        "navigationBarTitleText": "家庭计划",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/plan-edit",
+      "style": {
+        "navigationBarTitleText": "编辑计划",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/plan",
+      "style": {
+        "navigationBarTitleText": "计划详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/occurrence",
+      "style": {
+        "navigationBarTitleText": "完成详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/rewards",
+      "style": {
+        "navigationBarTitleText": "家庭奖励",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/reward-edit",
+      "style": {
+        "navigationBarTitleText": "编辑奖励",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/reward",
+      "style": {
+        "navigationBarTitleText": "奖励详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/order",
+      "style": {
+        "navigationBarTitleText": "兑换详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/family",
+      "style": {
+        "navigationBarTitleText": "家庭",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/child",
+      "style": {
+        "navigationBarTitleText": "孩子档案",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/child-edit",
+      "style": {
+        "navigationBarTitleText": "编辑孩子档案",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/guardians",
+      "style": {
+        "navigationBarTitleText": "共同家长",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/ledger",
+      "style": {
+        "navigationBarTitleText": "积分账本",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/history",
+      "style": {
+        "navigationBarTitleText": "家庭记录",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/guardian/settings",
+      "style": {
+        "navigationBarTitleText": "家庭设置",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/today",
+      "style": {
+        "navigationBarTitleText": "今天",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/activity",
+      "style": {
+        "navigationBarTitleText": "完成记录",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/wishes",
+      "style": {
+        "navigationBarTitleText": "心愿",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/reward",
+      "style": {
+        "navigationBarTitleText": "奖励详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/orders",
+      "style": {
+        "navigationBarTitleText": "我的兑换",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/order",
+      "style": {
+        "navigationBarTitleText": "兑换详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/child/growth",
+      "style": {
+        "navigationBarTitleText": "成长",
+        "enablePullDownRefresh": true
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "积乐圈",
+    "navigationBarBackgroundColor": "#F7F5EF",
+    "backgroundColor": "#F7F5EF",
+    "backgroundTextStyle": "dark"
+  },
+  "uniIdRouter": {}
+}

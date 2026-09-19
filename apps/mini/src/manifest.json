@@ -1,0 +1,28 @@
+{
+  "name": "积乐圈",
+  "appid": "__UNI__POINTJOY",
+  "description": "家庭活动约定、积分与奖励",
+  "versionName": "1.0.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "mp-weixin": {
+    "appid": "wx5c24ed9df4175b79",
+    "setting": {
+      "urlCheck": true,
+      "es6": true,
+      "minified": true
+    },
+    "usingComponents": true,
+    "requiredPrivateInfos": []
+  },
+  "h5": {
+    "title": "积乐圈家庭版",
+    "router": {
+      "mode": "hash"
+    }
+  },
+  "vueVersion": "3",
+  "uniStatistics": {
+    "enable": false
+  }
+}

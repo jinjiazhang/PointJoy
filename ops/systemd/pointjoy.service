@@ -1,0 +1,21 @@
+[Unit]
+Description=PointJoy family API
+After=network.target postgresql.service
+[Service]
+Type=simple
+User=pointjoy
+Group=pointjoy
+WorkingDirectory=/opt/pointjoy/api
+EnvironmentFile=/etc/pointjoy/api.env
+ExecStart=/opt/pointjoy/runtime/bin/node dist/main.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pointjoy /var/lib/pointjoy-recovery
+MemoryMax=384M
+UMask=0077
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+const root=process.cwd(),target=path.join(root,'work/server-release');
+await fs.rm(target,{recursive:true,force:true});await fs.mkdir(path.join(target,'api'),{recursive:true});
+const pkg=JSON.parse(await fs.readFile('apps/api/package.json','utf8'));
+delete pkg.devDependencies;pkg.scripts={start:'node dist/main.js',worker:'node dist/worker.js','migrate:deploy':'node dist/migrate.js',reconcile:'node dist/reconcile.js','reconcile:resolve':'node dist/domain/repair.js',recovery:'node dist/recovery.js','privacy:maintenance':'node dist/privacy/maintenance.js'};
+pkg.engines={node:'>=24 <25'};
+await fs.writeFile(path.join(target,'api/package.json'),JSON.stringify(pkg,null,2));
+await fs.cp('apps/api/dist',path.join(target,'api/dist'),{recursive:true});await fs.cp('apps/api/migrations',path.join(target,'api/migrations'),{recursive:true});await fs.cp('ops/site',path.join(target,'site'),{recursive:true});await fs.cp('ops',path.join(target,'ops'),{recursive:true});
+execFileSync('npm',['install','--package-lock-only','--omit=dev','--ignore-scripts','--no-fund'],{cwd:path.join(target,'api'),stdio:'inherit'});
+execFileSync('tar',['-czf',path.join(root,'work/pointjoy-server-release.tgz'),'-C',target,'.'],{stdio:'inherit'});
+console.log('Release package: work/pointjoy-server-release.tgz');

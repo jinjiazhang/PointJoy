@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          # Ephemeral CI database only; this is not a deployment credential.
+          POSTGRES_PASSWORD: pointjoy-ci-only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENV: test
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: pointjoy-ci-only
+      DATABASE_URL: postgresql://postgres:pointjoy-ci-only@localhost:5432/pointjoy_rebuild_local
+      TEST_DATABASE_URL: postgresql://postgres:pointjoy-ci-only@localhost:5432/pointjoy_rebuild_test
+      DOMAIN_TEST_DATABASE_URL: postgresql://postgres:pointjoy-ci-only@localhost:5432/pointjoy_domain_test
+      RECOVERY_TEST_DATABASE_URL: postgresql://postgres:pointjoy-ci-only@localhost:5432/pointjoy_recovery_test
+      PG_DUMP_BIN: /usr/lib/postgresql/16/bin/pg_dump
+      PG_RESTORE_BIN: /usr/lib/postgresql/16/bin/pg_restore
+      VITE_LOCAL_AUTH: 'false'
+      VITE_API_BASE_URL: https://pointjoy.jinjiazh.com/api/v1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Use the declared npm version
+        run: npm install --global npm@11.5.1
+
+      - name: Install PostgreSQL 16 clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+
+      - name: Create isolated databases
+        run: |
+          for database in pointjoy_rebuild_local pointjoy_rebuild_test pointjoy_domain_test pointjoy_identity_qa_20260919 pointjoy_recovery_test pointjoy_privacy_maintenance_qa; do
+            /usr/lib/postgresql/16/bin/createdb "$database"
+          done
+
+      - name: Install locked workspace dependencies
+        run: npm ci --no-fund
+
+      - name: Audit workspace dependencies
+        run: npm audit --audit-level=low
+
+      - name: Verify migration deployment and repeatability
+        run: |
+          npm run migrate:deploy
+          npm run migrate:deploy
+
+      - name: Typecheck, run all 85 tests, and build API, H5, and WeChat
+        run: npm run check
+
+      - name: Verify build outputs
+        run: |
+          test -f apps/api/dist/main.js
+          test -f apps/mini/dist/build/h5/index.html
+          test -f apps/mini/dist/build/mp-weixin/app.json

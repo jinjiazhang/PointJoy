@@ -1,0 +1,48 @@
+{
+  "name": "pointjoy",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "npm@11.5.1",
+  "scripts": {
+    "dev": "npm run dev -w @pointjoy/api",
+    "build": "npm run build -w @pointjoy/api && npm run build:h5 -w @pointjoy/mini && npm run build:mp-weixin -w @pointjoy/mini",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run typecheck",
+    "test": "npm run test -w @pointjoy/api && npm run test:domain -w @pointjoy/api && npm run test:identity -w @pointjoy/api && npm run test:recovery -w @pointjoy/api && npm run test:privacy-maintenance -w @pointjoy/api && npm run test -w @pointjoy/mini",
+    "test:domain": "npm run test:domain -w @pointjoy/api",
+    "migrate:deploy": "npm run migrate:deploy -w @pointjoy/api",
+    "reconcile": "npm run reconcile -w @pointjoy/api",
+    "reconcile:resolve": "npm run reconcile:resolve -w @pointjoy/api --",
+    "wechat:upload": "node scripts/upload-wechat.cjs",
+    "contracts": "tsx scripts/generate-contracts.ts",
+    "package:server": "npm run build -w @pointjoy/api && node scripts/package-server.mjs",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "overrides": {
+    "vite": "6.4.3",
+    "vue-i18n": "9.14.5",
+    "@babel/core": "7.29.7",
+    "postcss": "8.5.28",
+    "postcss-selector-parser": "6.1.4",
+    "ws": "8.21.3",
+    "adm-zip": "0.6.1",
+    "jpeg-js": "0.4.4",
+    "phin": "3.7.1",
+    "body-parser": "1.20.8",
+    "cookie": "0.7.2",
+    "path-to-regexp": "0.1.13",
+    "qs": "6.16.0",
+    "send": "0.19.2",
+    "express": "4.22.3",
+    "esbuild": "0.25.12",
+    "@intlify/core-base": "9.14.5",
+    "@intlify/message-resolver": "9.1.11"
+  }
+}

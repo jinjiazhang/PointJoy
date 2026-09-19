@@ -1,0 +1,38 @@
+{
+  "name": "@pointjoy/api",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test ../../tests/integration/*.test.ts",
+    "test:domain": "tsx --test ../../tests/domain/*.test.ts",
+    "migrate:deploy": "tsx src/migrate.ts",
+    "reconcile": "tsx src/reconcile.ts",
+    "reconcile:resolve": "tsx src/domain/repair.ts",
+    "worker": "tsx src/worker.ts",
+    "test:identity": "tsx --test ../../tests/identity/*.test.ts",
+    "test:recovery": "tsx --test ../../tests/recovery/*.test.ts",
+    "recovery": "tsx src/recovery.ts",
+    "privacy:maintenance": "tsx src/privacy/maintenance.ts",
+    "test:privacy-maintenance": "tsx --test ../../tests/privacy-maintenance/*.test.ts"
+  },
+  "dependencies": {
+    "fastify": "5.12.1",
+    "@fastify/cors": "11.2.0",
+    "@fastify/multipart": "9.4.0",
+    "@fastify/rate-limit": "10.3.0",
+    "pg": "8.16.3",
+    "zod": "3.25.76",
+    "sharp": "0.35.4",
+    "dotenv": "16.6.1"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6",
+    "typescript": "5.8.3",
+    "@types/node": "24.3.0",
+    "@types/pg": "8.15.5"
+  }
+}

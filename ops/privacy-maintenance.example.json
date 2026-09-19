@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "backupDirectories": [
+    { "path": "/var/backups/pointjoy-v1", "kind": "ROTATING", "keyFile": "/etc/pointjoy/backup.key" },
+    { "path": "/var/backups/pointjoy-rebuild", "kind": "LEGACY", "keyFile": "/etc/pointjoy/backup.key" }
+  ],
+  "exportDirectory": "/var/lib/pointjoy/exports",
+  "backupLockFile": "/run/lock/pointjoy-backup.lock",
+  "maxLatestBackupAgeMinutes": 30
+}

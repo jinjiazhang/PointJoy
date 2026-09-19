@@ -1,0 +1,24 @@
+[Unit]
+Description=PointJoy media, lifecycle and reconciliation worker
+After=network.target postgresql.service pointjoy.service
+[Service]
+Type=simple
+User=pointjoy
+Group=pointjoy
+WorkingDirectory=/opt/pointjoy/api
+EnvironmentFile=/etc/pointjoy/worker.env
+ExecStart=/opt/pointjoy/runtime/bin/node dist/worker.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=40
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pointjoy /var/lib/pointjoy-recovery
+MemoryMax=512M
+TasksMax=48
+UMask=0077
+[Install]
+WantedBy=multi-user.target
