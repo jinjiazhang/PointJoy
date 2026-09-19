@@ -55,6 +55,10 @@ npm run test:integration --workspace=@pointjoy/mini
 
 资料页主动查询微信隐私授权；需要同意时展示平台隐私指引和原生同意按钮，确认后再启用头像与昵称。微信后台必须声明头像、昵称用途；当前工具未核验该 AppID 的后台声明和真机输入法行为。参考[微信头像昵称填写](https://developers.weixin.qq.com/miniprogram/dev/framework/open-ability/userProfile.html)及[隐私授权接入指南](https://developers.weixin.qq.com/miniprogram/dev/framework/user-privacy/PrivacyAuthorize.html)。
 
+1.0.2 修正了图片保存通道：微信端读取已选临时文件的原始二进制，通过 `uni.request` 向同一 API 的受限上传地址发送 multipart，沿用短时令牌、大小/身份校验和服务端图片处理。H5 仍使用文件上传接口。不会把本地临时路径当永久头像，也不会让用户在选择微信头像后再上传一次。界面显示“正在保存头像”，相册与拍照收在“使用其他头像”中。网络失败、超时、凭证过期分别提示，不输出私有路径或令牌；不自动重发结果不明的字节请求。
+
+新增 21 项图片传输测试，验证真实 multipart 解析、二进制完整性、10 MiB 边界、受限地址、响应校验与失败分支；现有完整 HTTP 联调也改为使用同一 multipart 编码器，验证头像、孩子头像和活动照片的实际保存与后续业务流程。
+
 ## 已验证
 
 - 类型检查、H5 生产编译、微信小程序生产编译。

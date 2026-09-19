@@ -70,7 +70,7 @@ npm run check
 
 `npm run check` 执行所有类型检查、全部测试、API 编译以及 H5 / 微信小程序构建。也可单独执行 `npm run typecheck`、`npm test` 或 `npm run build`。
 
-截至本次重建验证，全部 **85 项测试通过**，按测试运行器计数（包括父测试）：
+截至本次重建验证，全部 **106 项测试通过**，按测试运行器计数（包括父测试）：
 
 | 测试 | 数量 | 数据库配置 |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ npm run check
 | 身份、权限和隐私安全 | 16 | `localhost/pointjoy_identity_qa_20260919` |
 | 真实备份恢复与日志重放 | 13 | `RECOVERY_TEST_DATABASE_URL`；库名固定 `pointjoy_recovery_test` |
 | 隐私维护及备份轮换确认 | 10 | `localhost/pointjoy_privacy_maintenance_qa` |
-| 前端传输与操作恢复 | 9 | 无数据库 |
+| 前端传输、图片保存与操作恢复 | 30 | 无数据库 |
 
 未指定 URL 时，测试默认使用本机 PostgreSQL。身份和隐私维护测试使用固定本机库名，通过 `PGUSER`、`PGPASSWORD`、`PGPORT` 指定角色和连接参数；CI 已为这五个隔离库配置独立实例。恢复测试可通过 `PG_DUMP_BIN`、`PG_RESTORE_BIN` 指定 PostgreSQL 16 客户端路径。
 
