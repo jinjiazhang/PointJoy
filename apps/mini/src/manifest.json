@@ -2,8 +2,8 @@
   "name": "积乐圈",
   "appid": "__UNI__POINTJOY",
   "description": "家庭活动约定、积分与奖励",
-  "versionName": "1.1.0",
-  "versionCode": "110",
+  "versionName": "1.1.1",
+  "versionCode": "111",
   "transformPx": false,
   "mp-weixin": {
     "appid": "wx5c24ed9df4175b79",

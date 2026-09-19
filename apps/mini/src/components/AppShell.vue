@@ -35,6 +35,6 @@ function switchTab(route:string){if(route!==props.tab)go(route as RouteName,{},t
    <view v-if="pendingCount" class="notice warning"><text>{{pendingCount}}次操作等待确认</text><button class="text-button" @tap="go('recovery')">查看进度</button></view>
    <slot/>
   </view>
-  <view v-if="tab" class="tab-dock-wrap"><view class="bottom-nav"><button v-for="item in tabs" :key="item[0]" class="nav-item" :class="{active:tab===item[0]}" :aria-label="item[1]" @tap="switchTab(item[0])"><view class="nav-icon-wrap"><AppIcon :name="item[2]" :tone="tab===item[0]?'blue':'muted'" size="43rpx"/></view><text>{{item[1]}}</text></button></view></view>
+  <view v-if="tab" class="tab-bar"><view class="bottom-nav"><button v-for="item in tabs" :key="item[0]" class="nav-item" :class="{active:tab===item[0]}" :aria-label="item[1]" @tap="switchTab(item[0])"><view class="nav-icon-wrap"><AppIcon :name="item[2]" :tone="tab===item[0]?'blue':'muted'" size="43rpx"/></view><text>{{item[1]}}</text></button></view></view>
  </view>
 </template>
