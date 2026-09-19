@@ -47,6 +47,14 @@ npm run test:integration --workspace=@pointjoy/mini
 
 首次确认数据处理申请时，最少状态回执独立保存，不随注销清除；在线删除完成和最多35天备份轮换清理分开显示。导出 ZIP 通过微信文件保存/分享选择器交给用户操作。
 
+## 微信头像和昵称（1.0.1）
+
+首次资料页和“我的账号”均支持微信原生头像选择，回调中的临时图片走现有上传、图片处理和 READY 校验。取消选择保留当前头像；低版本微信可继续从相册选择或拍照。家长为孩子建立的档案仍由家长填写，不自动复制家长微信资料。
+
+昵称使用 `type="nickname"`，点击后可选微信推荐昵称，也可手动输入。输入框和提交按钮位于同一原生 form，通过提交事件取最终值，并处理 blur 同步、昵称检查失败和超时。资料门禁仍要求有效昵称和上传成功的头像。
+
+资料页主动查询微信隐私授权；需要同意时展示平台隐私指引和原生同意按钮，确认后再启用头像与昵称。微信后台必须声明头像、昵称用途；当前工具未核验该 AppID 的后台声明和真机输入法行为。参考[微信头像昵称填写](https://developers.weixin.qq.com/miniprogram/dev/framework/open-ability/userProfile.html)及[隐私授权接入指南](https://developers.weixin.qq.com/miniprogram/dev/framework/user-privacy/PrivacyAuthorize.html)。
+
 ## 已验证
 
 - 类型检查、H5 生产编译、微信小程序生产编译。

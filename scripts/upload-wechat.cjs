@@ -2,7 +2,7 @@ const path=require('node:path');
 const fs=require('node:fs');
 const ci=require('../work/wechat-ci/node_modules/miniprogram-ci');
 const root=path.resolve(__dirname,'..');
-const version=process.env.WECHAT_VERSION||'1.0.0';
+const version=process.env.WECHAT_VERSION||JSON.parse(fs.readFileSync(path.join(root,'apps/mini/src/manifest.json'),'utf8')).versionName;
 const build=path.join(root,'apps/mini/dist/build/mp-weixin');
 if(!fs.existsSync(path.join(build,'app.json')))throw new Error('Build mp-weixin before uploading');
 const project=new ci.Project({appid:'wx5c24ed9df4175b79',type:'miniProgram',projectPath:build,privateKeyPath:process.env.WECHAT_UPLOAD_KEY_PATH||path.join(root,'private.wx5c24ed9df4175b79.key'),ignores:['node_modules/**/*']});

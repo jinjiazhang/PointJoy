@@ -17,6 +17,12 @@
 
 ## 验证证据与范围
 
+### 1.0.1 微信头像昵称补充发布
+
+2026-09-19 已成功上传微信 **1.0.1 开发版本**，官方编译后完整包为 **373620 字节**。首次资料和本人账号页面新增微信头像选择、微信昵称推荐、原生表单取值、昵称检查反馈与微信隐私同意流程；本次只更新小程序，服务端和数据库无需修改。
+
+类型检查、9 项现有前端测试、H5/微信构建及官方上传均通过，编译产物确认保留 chooseAvatar、nickname、form submit、nicknamereview 和 agreePrivacyAuthorization。真实微信输入法与平台隐私声明仍需管理员真机核验。新上传证据保存在 `.var/wechat-profile-upload.log`，最新结果与预览仍在 Git 忽略的 `work/`。
+
 本地干净依赖安装与审计 0 漏洞；类型检查、85 项自动化测试、API / H5 / 微信构建通过。85 为测试运行器计数，分组为 23 流程、14 领域、16 身份隐私、13 恢复、10 隐私维护、9 前端。恢复测试实际使用 pg_dump/pg_restore 和独立加密日志；本次生产备份验证了真实加密文件、校验和及恢复目录，未将备份覆盖回在线业务库。
 
 本地受限证据：`.var/release-check.log`、`.var/production-deploy.log`、`.var/wechat-upload.log`，以及 `work/wechat-upload-result.json`。这些文件与真实配置均不进入 Git。当前 Git 凭据缺少 GitHub `workflow` scope，CI 配置保留在 `ops/ci.github-actions.yml`，尚未启用远程 Actions。不能把本地检查结果等同于远程 CI 已通过。
