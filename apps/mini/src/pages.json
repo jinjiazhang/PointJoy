@@ -228,9 +228,10 @@
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "积乐圈",
-    "navigationBarBackgroundColor": "#F7F5EF",
-    "backgroundColor": "#F7F5EF",
-    "backgroundTextStyle": "dark"
+    "navigationBarBackgroundColor": "#F5F6FA",
+    "backgroundColor": "#F5F6FA",
+    "backgroundTextStyle": "dark",
+    "navigationStyle": "custom"
   },
   "uniIdRouter": {}
 }

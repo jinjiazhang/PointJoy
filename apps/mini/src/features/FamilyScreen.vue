@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {ref,computed} from 'vue'
 import AppShell from '../components/AppShell.vue'
+import AppIcon from '../components/AppIcon.vue'
 import PrivateImage from '../components/PrivateImage.vue'
 import MediaUploader from '../components/MediaUploader.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -52,13 +53,155 @@ async function execute(){await act(async()=>{
 async function saveFamily(){await act(async()=>{const n=name.value.trim();if([...n].length<2||[...n].length>30)throw new Error('家庭名需2—30字');await mutate('PATCH',familyPath(),{name:n,expectedVersion:session.family!.family.version},'修改家庭名称');await session.bootstrap()},'家庭名称已保存')}
 function guardianName(g:Guardian){return g.user?.displayName||g.displayName||'共同家长'}
 </script>
-<template><AppShell :title="titles[page]" :tab="page==='family'?'family':''" :back="page!=='family'" :loading="loading" :error="error" @retry="reload">
-<view v-if="session.family?.family.status==='ARCHIVED'" class="notice read-only-banner">家庭已归档，业务记录只读。</view>
-<template v-if="page==='family'"><view class="section-head"><text class="section-title">孩子</text><button v-if="session.family?.family.status!=='ARCHIVED'" class="text-button" @tap="go('childEdit')">＋ 添加孩子</button></view><view class="check-row" @tap="includeArchived=!includeArchived;act(()=>loadChildren())"><checkbox :checked="includeArchived" color="#176b5b"/><text>也看已归档档案</text></view><view v-for="c in children" :key="c.id" class="card" @tap="go('child',{id:c.id})"><view class="row"><PrivateImage :media-id="c.avatarMediaId" avatar/><view class="grow"><text class="card-title">{{c.nickname}}</text><text class="caption">{{c.status==='ARCHIVED'?'只读档案':'每个孩子都有自己的积分账本'}}</text></view><text>→</text></view></view><EmptyState v-if="!loading&&!children.length" title="添加第一位小朋友" description="上传喜欢的头像，取一个家里熟悉的昵称。"/><LoadMore :has-more="hasMore" :loading="busy" @more="act(()=>loadChildren(true))"/><view class="button-stack"><button class="secondary" @tap="go('guardians')">共同家长与邀请</button><button class="secondary" @tap="go('history')">历史与操作记录</button><button class="secondary" @tap="go('settings')">家庭设置与隐私</button></view><view class="notice section">家长可以直接记录真实完成，也可以代孩子提交后自己审核。一个家长也能完整使用。</view></template>
-<template v-else-if="page==='childEdit'"><MediaUploader v-model="avatar" :scope="{purpose:'CHILD_AVATAR',familyId:session.view?.familyId,childId:child?.id,childDraftId:childDraftId||undefined}" :max="1" avatar/><view class="field"><text class="field-label">孩子昵称（必填）</text><input class="input" v-model="nickname" maxlength="24" placeholder="家里熟悉的小名就好"/></view><view class="field"><text class="field-label">年龄段（选填）</text><picker :range="ages" :value="Math.max(0,ageValues.indexOf(ageBand))" @change="ageBand=ageValues[Number($event.detail.value)]"><view class="select-control">{{ages[Math.max(0,ageValues.indexOf(ageBand))]}}</view></picker></view><text class="caption">不需要学校、住址或精确生日。头像可以是插画，不必是真人照片。</text><button :class="{'is-disabled':(busy)}" class="primary full section" :loading="busy" :disabled="busy" @tap="saveChild">保存孩子档案</button></template>
-<template v-else-if="page==='child'&&child"><view class="row"><PrivateImage :media-id="child.avatarMediaId" size="112rpx" avatar/><view><text class="page-title">{{child.nickname}}</text><StatusPill :status="child.status"/></view></view><PointBalance class="section" :account="account"/><view v-if="wish?.rewardSummary" class="card"><text class="caption">当前心愿</text><text class="card-title">{{wish.rewardSummary.name}}</text></view><view class="button-stack"><button v-if="!session.isFamilyReadOnly&&child.status==='ACTIVE'" class="primary" :loading="busy" @tap="act(()=>session.enterChild(child!.id))">进入这个孩子的模式</button><button v-if="child.status==='ACTIVE'" class="secondary" @tap="go('history',{childId:child.id,record:'true'})">记录完成 / 历史补记</button><button class="secondary" @tap="go('ledger',{childId:child.id})">积分账本与手动表扬</button><button class="secondary" @tap="go('history',{childId:child.id})">完成与兑换记录</button><button v-if="child.status==='ACTIVE'" class="secondary" @tap="go('childEdit',{id:child.id})">编辑档案</button></view><view v-if="owner" class="card section"><text class="section-title">孩子自己的微信</text><text class="body-copy muted">{{child.bindingState==='BOUND'?'已有微信账号绑定，可本人登录。':'尚未绑定，可以继续由家长代操作。'}}</text><template v-if="child.status==='ACTIVE'"><button v-if="child.bindingState!=='BOUND'" class="secondary full section" :loading="busy" @tap="createInvite(true)">生成孩子绑定邀请</button><button v-else class="danger-button full section" @tap="showAction('unbind')">解除当前微信绑定</button></template><view v-for="inv in bindingInvites" :key="inv.id" class="section"><StatusPill :status="inv.status"/><text class="caption">有效至 {{dateTime(inv.expiresAt)}}</text><button v-if="['ACTIVE','PENDING'].includes(inv.status)" class="text-button" @tap="revoke(inv,true)">撤销邀请</button></view><button class="text-button full" @tap="go('guardians',{tab:'applications'})">查看绑定申请 →</button></view><button v-if="child.status==='ACTIVE'" class="text-button full section" @tap="checkArchive()">归档这个孩子的档案</button></template>
-<template v-else-if="page==='guardians'"><view class="tabs"><button :class="{active:tab==='guardians'}" @tap="tab='guardians'">共同家长</button><button v-if="owner" :class="{active:tab==='applications'}" @tap="tab='applications'">待处理申请</button><button v-if="owner" :class="{active:tab==='invitations'}" @tap="tab='invitations'">邀请</button></view><template v-if="tab==='guardians'"><view v-for="g in guardians" :key="g.id" class="card"><view class="row"><PrivateImage :media-id="g.user?.avatarMediaId" avatar/><view class="grow"><text class="card-title">{{guardianName(g)}}</text><text class="caption">{{label(g.role)}}</text></view></view><view v-if="!session.isFamilyReadOnly&&owner&&g.role!=='OWNER'" class="button-row"><button class="secondary" @tap="showAction('transfer',g.membershipId||g.id,g.version)">转让负责人</button><button class="danger-button" @tap="showAction('remove',g.membershipId||g.id,g.version)">移除</button></view></view><button v-if="owner&&!session.isFamilyReadOnly" class="primary full section" @tap="createInvite()">邀请共同家长</button><button class="text-button full section" @tap="showAction('leave')">退出这个家庭</button></template><template v-if="tab==='applications'"><view v-for="a in applications" :key="a.id" class="card"><text class="caption">{{a.purpose==='CHILD_BIND'?'孩子账号绑定':'共同家长加入'}}</text><view class="row section"><PrivateImage :media-id="(a.applicantProfile||a.applicant)?.avatarMediaId" avatar/><view class="grow"><text class="card-title">{{(a.applicantProfile||a.applicant)?.displayName||'申请者'}}</text><text v-if="a.child||a.childNickname" class="caption">目标：{{a.child?.nickname||a.childNickname}}</text></view><StatusPill :status="a.status"/></view><text class="caption">申请于 {{dateTime(a.createdAt)}}</text><view v-if="['PENDING','PENDING_APPROVAL'].includes(a.status)" class="button-row"><button class="primary" @tap="showAction('approve',a.id,a.version)">核对并批准</button><button class="secondary" @tap="showAction('reject',a.id,a.version)">拒绝</button></view></view><EmptyState v-if="!applications.length" title="暂时没有申请" description="受邀家人完成头像昵称后，可以向你提出申请。"/></template><template v-if="tab==='invitations'"><button class="primary full" @tap="createInvite()">生成新家长邀请</button><view v-for="inv in invitations" :key="inv.id" class="card section"><StatusPill :status="inv.status"/><text class="caption">有效至 {{dateTime(inv.expiresAt)}}</text><button v-if="['ACTIVE','PENDING'].includes(inv.status)" class="text-button" @tap="revoke(inv)">撤销此邀请</button></view></template></template>
-<template v-else-if="page==='settings'"><view class="card"><text class="section-title">家庭资料</text><view class="field"><text class="field-label">家庭名称</text><input class="input" v-model="name" maxlength="30" :disabled="!owner||session.family?.family.status==='ARCHIVED'"/></view><button v-if="owner&&session.family?.family.status!=='ARCHIVED'" class="primary full" :loading="busy" @tap="saveFamily">保存家庭名称</button></view><view class="button-stack"><button class="secondary" @tap="go('account')">我的头像、昵称与账号</button><button class="secondary" @tap="go('pin',{purpose:session.view?.pinEnabled?'change':'enroll'})">设置 / 修改家长密码</button><button class="secondary" @tap="go('privacy')">隐私说明与个人数据申请</button><button v-if="owner" class="secondary" @tap="go('privacy',{scope:'FAMILY'})">家庭全量数据导出 / 删除</button><button v-if="owner&&session.family?.family.status!=='ARCHIVED'" class="danger-button" @tap="checkArchive(true)">归档家庭</button></view><text class="caption section">归档保留只读记录，不等于删除。最后一位家长不能直接退出留下无主家庭。</text></template>
-<view v-if="inviteToken" class="card section"><text class="section-title">{{invitePurpose==='CHILD_BIND'?'孩子绑定邀请':'共同家长邀请'}}</text><text class="caption">24小时内、一次成功有效。只交给你确认的对应使用者。有效至 {{dateTime(inviteExpires)}}</text><view class="code-box section">{{inviteToken}}</view><button class="primary full section" @tap="copyInvite">复制邀请令牌</button><text class="caption section">让对方微信登录并完整上传头像昵称，再在家庭入口粘贴对应邀请。申请还需要负责人批准。</text></view>
-<view v-if="pendingAction" class="card section"><text class="section-title">确认{{({remove:'移除家长',transfer:'转让负责人',unbind:'解除绑定',approve:'批准申请',reject:'拒绝申请',archiveChild:'归档孩子',archiveFamily:'归档家庭',leave:'退出家庭'} as Record<string,string>)[pendingAction]}}</text><view class="notice warning section">{{pendingAction==='unbind'?'旧微信账号将立即不能再访问这个孩子，账本和历史保留。':pendingAction==='transfer'?'新负责人将获得邀请、移除和家庭数据管理权限。':pendingAction==='leave'?'退出后不能再访问这个家庭。负责人必须先转让，最后一名家长不能直接退出。':'请核对对象和操作后果，历史操作将被保留。'}}</view><template v-if="archive&&pendingAction.startsWith('archive')"><view v-if="!archive.canArchive" class="notice error">请先处理以下待办，不能自动批准或取消。</view><button v-for="o in archive.blockingOccurrences" :key="o.id" class="secondary full section" @tap="go('occurrence',{id:o.id})">处理完成记录：{{o.snapshot?.title||o.id}}</button><button v-for="o in archive.blockingOrders" :key="o.id" class="secondary full section" @tap="go('order',{id:o.id})">处理兑换：{{o.rewardSnapshot?.name||o.id}}</button><text v-if="archive.account" class="body-copy">保留只读账本：可用{{archive.account.availablePoints}}、预留{{archive.account.heldPoints}}积分</text><view class="check-row" @tap="retain=!retain"><checkbox :checked="retain" color="#176b5b"/><text>我确认保留只读账本，归档不清零积分</text></view></template><view v-if="['remove','unbind','reject'].includes(pendingAction)" class="field"><text class="field-label">原因（必填）</text><textarea class="textarea" v-model="reason" maxlength="200"/></view><view v-if="pendingAction==='approve'&&applications.find(x=>x.id===selectedId)?.purpose==='CHILD_BIND'" class="check-row" @tap="syncProfile=!syncProfile"><checkbox :checked="syncProfile" color="#176b5b"/><text>将已验证的账号头像昵称同步到孩子档案</text></view><view v-if="['transfer','unbind','archiveFamily'].includes(pendingAction)" class="field"><text class="field-label">家长密码（如已设置）</text><input class="input" v-model="pin" password type="number" maxlength="6"/></view><view class="button-row"><button :class="{'is-disabled':(busy)}" class="primary" :loading="busy" :disabled="busy" @tap="execute">确认操作</button><button :class="{'is-disabled':(busy)}" class="secondary" :disabled="busy" @tap="pendingAction=''">暂不操作</button></view></view>
-</AppShell></template>
+<template>
+<AppShell :title="titles[page]" :tab="page==='family'?'family':''" :back="page!=='family'" :loading="loading" :error="error" @retry="reload">
+<view class="family-ui">
+  <template v-if="page==='family'">
+    <view class="family-overview">
+      <view class="family-icon-tile family-icon-tile-large"><AppIcon name="family" size="52rpx" tone="blue"/></view>
+      <view class="grow"><text class="family-overline">一起陪伴，慢慢长大</text><text class="family-overview-title">{{session.family?.family.name||'我们的家庭'}}</text><text class="caption">每个孩子，都有自己的成长节奏。</text></view>
+    </view>
+    <view class="section-head family-section-head"><text class="section-title">孩子档案</text><button v-if="session.family?.family.status!=='ARCHIVED'" class="text-button family-add" @tap="go('childEdit')"><AppIcon name="plus" size="30rpx" tone="blue"/><text>添加孩子</text></button></view>
+    <view class="family-children">
+      <view v-for="c in children" :key="c.id" class="family-child-card" @tap="go('child',{id:c.id})">
+        <PrivateImage :media-id="c.avatarMediaId" size="104rpx" avatar/>
+        <view class="grow"><text class="family-child-name">{{c.nickname}}</text><text class="caption">{{c.status==='ARCHIVED'?'已归档 · 只读档案':'查看成长与积分'}}</text></view>
+        <AppIcon name="chevron" size="30rpx" tone="muted"/>
+      </view>
+    </view>
+    <EmptyState v-if="!loading&&!children.length" title="添加第一位小朋友" description="上传喜欢的头像，取一个家里熟悉的昵称。"/>
+    <LoadMore :has-more="hasMore" :loading="busy" @more="act(()=>loadChildren(true))"/>
+    <view class="check-row family-archive-filter" @tap="includeArchived=!includeArchived;act(()=>loadChildren())"><checkbox :checked="includeArchived" color="#007AFF"/><text>显示已归档档案</text></view>
+    <view class="family-group-label">家庭管理</view>
+    <view class="family-setting-group">
+      <button class="family-setting-row" @tap="go('guardians')"><view class="family-icon-tile"><AppIcon name="family" size="36rpx" tone="blue"/></view><view class="family-setting-copy"><text class="family-setting-title">共同家长与邀请</text><text class="caption">和家人一起参与</text></view><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button class="family-setting-row family-row-divider" @tap="go('history')"><view class="family-icon-tile family-icon-neutral"><AppIcon name="history" size="36rpx" tone="ink"/></view><view class="family-setting-copy"><text class="family-setting-title">家庭记录</text><text class="caption">完成、兑换与操作历史</text></view><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button class="family-setting-row family-row-divider" @tap="go('settings')"><view class="family-icon-tile family-icon-neutral"><AppIcon name="settings" size="36rpx" tone="ink"/></view><view class="family-setting-copy"><text class="family-setting-title">设置与隐私</text><text class="caption">家庭资料、账号和数据</text></view><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+    </view>
+    <view class="family-footnote"><AppIcon name="heart" size="30rpx" tone="muted"/><text>一位家长也能完整使用。可以直接记录真实完成，也可以代孩子提交后审核。</text></view>
+  </template>
+
+  <template v-else-if="page==='childEdit'">
+    <view class="family-edit-intro"><text class="family-overview-title">{{child?'熟悉的小名，喜欢的头像':'认识一位小朋友'}}</text><text class="caption">这份档案属于孩子，也记录你们一起的成长。</text></view>
+    <view class="family-panel"><MediaUploader v-model="avatar" :scope="{purpose:'CHILD_AVATAR',familyId:session.view?.familyId,childId:child?.id,childDraftId:childDraftId||undefined}" :max="1" avatar/></view>
+    <view class="family-panel">
+      <view class="field"><text class="field-label">孩子昵称 <text class="family-required">必填</text></text><input class="input" v-model="nickname" maxlength="24" placeholder="家里熟悉的小名就好"/></view>
+      <view class="field"><text class="field-label">年龄段 <text class="family-optional">选填</text></text><picker :range="ages" :value="Math.max(0,ageValues.indexOf(ageBand))" @change="ageBand=ageValues[Number($event.detail.value)]"><view class="select-control family-select">{{ages[Math.max(0,ageValues.indexOf(ageBand))]}}<AppIcon name="chevron" size="26rpx" tone="muted"/></view></picker></view>
+    </view>
+    <view class="family-footnote"><AppIcon name="shield" size="30rpx" tone="muted"/><text>不需要学校、住址或精确生日。头像可以是插画，不必是真人照片。</text></view>
+    <button :class="{'is-disabled':busy}" class="primary full family-save" :loading="busy" :disabled="busy" @tap="saveChild">保存孩子档案</button>
+  </template>
+
+  <template v-else-if="page==='child'&&child">
+    <view class="family-profile-header"><PrivateImage :media-id="child.avatarMediaId" size="136rpx" avatar/><view class="grow"><text class="family-profile-name">{{child.nickname}}</text><StatusPill :status="child.status"/></view><view class="family-profile-decoration"><AppIcon name="heart" size="44rpx" tone="blue"/></view></view>
+    <PointBalance class="family-balance" :account="account"/>
+    <view v-if="wish?.rewardSummary" class="family-wish"><view class="family-icon-tile family-icon-warm"><AppIcon name="star" size="36rpx" tone="orange"/></view><view class="grow"><text class="caption">正在期待的小心愿</text><text class="family-setting-title">{{wish.rewardSummary.name}}</text></view></view>
+    <button v-if="!session.isFamilyReadOnly&&child.status==='ACTIVE'" class="primary full family-save" :loading="busy" @tap="act(()=>session.enterChild(child!.id))">进入这个孩子的模式</button>
+    <view class="family-group-label">陪伴与记录</view>
+    <view class="family-setting-group">
+      <button v-if="child.status==='ACTIVE'" class="family-setting-row" @tap="go('history',{childId:child.id,record:'true'})"><view class="family-icon-tile"><AppIcon name="check" size="36rpx" tone="blue"/></view><text class="family-setting-copy family-setting-title">记录完成 / 历史补记</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button class="family-setting-row family-row-divider" @tap="go('ledger',{childId:child.id})"><view class="family-icon-tile family-icon-warm"><AppIcon name="star" size="36rpx" tone="orange"/></view><text class="family-setting-copy family-setting-title">积分账本与手动表扬</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button class="family-setting-row family-row-divider" @tap="go('history',{childId:child.id})"><view class="family-icon-tile family-icon-neutral"><AppIcon name="history" size="36rpx" tone="ink"/></view><text class="family-setting-copy family-setting-title">完成与兑换记录</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button v-if="child.status==='ACTIVE'" class="family-setting-row family-row-divider" @tap="go('childEdit',{id:child.id})"><view class="family-icon-tile family-icon-neutral"><AppIcon name="edit" size="36rpx" tone="ink"/></view><text class="family-setting-copy family-setting-title">编辑孩子档案</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+    </view>
+    <view v-if="owner" class="family-panel family-binding-panel">
+      <view class="family-panel-heading"><AppIcon name="user" size="36rpx" tone="blue"/><text class="section-title">孩子自己的微信</text></view>
+      <text class="family-panel-description">{{child.bindingState==='BOUND'?'已绑定微信，孩子可以自己登录。':'尚未绑定，可以继续由家长代操作。'}}</text>
+      <template v-if="child.status==='ACTIVE'"><button v-if="child.bindingState!=='BOUND'" class="secondary full section" :loading="busy" @tap="createInvite(true)">生成孩子绑定邀请</button><button v-else class="danger-button full section" @tap="showAction('unbind')">解除当前微信绑定</button></template>
+      <view v-for="inv in bindingInvites" :key="inv.id" class="family-invite-history"><view class="row between"><StatusPill :status="inv.status"/><button v-if="['ACTIVE','PENDING'].includes(inv.status)" class="text-button" @tap="revoke(inv,true)">撤销邀请</button></view><text class="caption">有效至 {{dateTime(inv.expiresAt)}}</text></view>
+      <button class="family-inline-link" @tap="go('guardians',{tab:'applications'})"><text>查看绑定申请</text><AppIcon name="chevron" size="26rpx" tone="blue"/></button>
+    </view>
+    <button v-if="child.status==='ACTIVE'" class="family-quiet-action" @tap="checkArchive()"><AppIcon name="archive" size="30rpx" tone="muted"/><text>归档这个孩子的档案</text></button>
+  </template>
+
+  <template v-else-if="page==='guardians'">
+    <view class="tabs family-tabs"><button :class="{active:tab==='guardians'}" @tap="tab='guardians'">共同家长</button><button v-if="owner" :class="{active:tab==='applications'}" @tap="tab='applications'">待处理申请</button><button v-if="owner" :class="{active:tab==='invitations'}" @tap="tab='invitations'">邀请</button></view>
+    <template v-if="tab==='guardians'">
+      <view v-for="g in guardians" :key="g.id" class="family-panel family-member-card"><view class="row"><PrivateImage :media-id="g.user?.avatarMediaId" size="96rpx" avatar/><view class="grow"><text class="family-child-name">{{guardianName(g)}}</text><text class="caption">{{label(g.role)}}</text></view><AppIcon v-if="g.role==='OWNER'" name="shield" size="36rpx" tone="blue"/></view><view v-if="!session.isFamilyReadOnly&&owner&&g.role!=='OWNER'" class="button-row family-member-actions"><button class="secondary" @tap="showAction('transfer',g.membershipId||g.id,g.version)">转让负责人</button><button class="danger-button" @tap="showAction('remove',g.membershipId||g.id,g.version)">移除</button></view></view>
+      <button v-if="owner&&!session.isFamilyReadOnly" class="primary full family-save" @tap="createInvite()">邀请共同家长</button>
+      <button class="family-quiet-action" @tap="showAction('leave')">退出这个家庭</button>
+    </template>
+    <template v-if="tab==='applications'">
+      <view v-for="a in applications" :key="a.id" class="family-panel"><view class="row between"><text class="family-overline">{{a.purpose==='CHILD_BIND'?'孩子账号绑定':'共同家长加入'}}</text><StatusPill :status="a.status"/></view><view class="row family-applicant"><PrivateImage :media-id="(a.applicantProfile||a.applicant)?.avatarMediaId" size="96rpx" avatar/><view class="grow"><text class="family-child-name">{{(a.applicantProfile||a.applicant)?.displayName||'申请者'}}</text><text v-if="a.child||a.childNickname" class="caption">目标孩子：{{a.child?.nickname||a.childNickname}}</text></view></view><text class="caption">申请于 {{dateTime(a.createdAt)}}</text><view v-if="['PENDING','PENDING_APPROVAL'].includes(a.status)" class="button-row family-member-actions"><button class="primary" @tap="showAction('approve',a.id,a.version)">核对并批准</button><button class="secondary" @tap="showAction('reject',a.id,a.version)">拒绝</button></view></view>
+      <EmptyState v-if="!applications.length" title="暂时没有申请" description="受邀家人完成头像昵称后，可以向你提出申请。"/>
+    </template>
+    <template v-if="tab==='invitations'">
+      <button class="primary full family-save" @tap="createInvite()">生成新家长邀请</button>
+      <view v-for="inv in invitations" :key="inv.id" class="family-panel"><view class="row between"><view class="family-panel-heading"><AppIcon name="family" size="34rpx" tone="blue"/><text class="family-setting-title">共同家长邀请</text></view><StatusPill :status="inv.status"/></view><text class="caption section">有效至 {{dateTime(inv.expiresAt)}}</text><button v-if="['ACTIVE','PENDING'].includes(inv.status)" class="family-inline-link" @tap="revoke(inv)"><text>撤销此邀请</text></button></view>
+    </template>
+  </template>
+
+  <template v-else-if="page==='settings'">
+    <view class="family-group-label">家庭资料</view>
+    <view class="family-panel"><view class="field"><text class="field-label">家庭名称</text><input class="input" v-model="name" maxlength="30" :disabled="!owner||session.family?.family.status==='ARCHIVED'"/></view><button v-if="owner&&session.family?.family.status!=='ARCHIVED'" class="primary full" :loading="busy" @tap="saveFamily">保存家庭名称</button></view>
+    <view class="family-group-label">账号与安全</view>
+    <view class="family-setting-group">
+      <button class="family-setting-row" @tap="go('account')"><view class="family-icon-tile"><AppIcon name="user" size="36rpx" tone="blue"/></view><text class="family-setting-copy family-setting-title">我的头像、昵称与账号</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button class="family-setting-row family-row-divider" @tap="go('pin',{purpose:session.view?.pinEnabled?'change':'enroll'})"><view class="family-icon-tile family-icon-neutral"><AppIcon name="lock" size="36rpx" tone="ink"/></view><text class="family-setting-copy family-setting-title">设置 / 修改家长密码</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+      <button class="family-setting-row family-row-divider" @tap="go('privacy')"><view class="family-icon-tile family-icon-neutral"><AppIcon name="shield" size="36rpx" tone="ink"/></view><text class="family-setting-copy family-setting-title">隐私说明与个人数据</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button>
+    </view>
+    <template v-if="owner"><view class="family-group-label">家庭数据</view><view class="family-setting-group"><button class="family-setting-row" @tap="go('privacy',{scope:'FAMILY'})"><view class="family-icon-tile"><AppIcon name="download" size="36rpx" tone="blue"/></view><view class="family-setting-copy"><text class="family-setting-title">家庭全量数据</text><text class="caption">申请导出或删除</text></view><AppIcon name="chevron" size="28rpx" tone="muted"/></button><button v-if="session.family?.family.status!=='ARCHIVED'" class="family-setting-row family-row-divider" @tap="checkArchive(true)"><view class="family-icon-tile family-icon-neutral"><AppIcon name="archive" size="36rpx" tone="ink"/></view><text class="family-setting-copy family-setting-title">归档家庭</text><AppIcon name="chevron" size="28rpx" tone="muted"/></button></view></template>
+    <view class="family-footnote"><AppIcon name="shield" size="30rpx" tone="muted"/><text>归档保留只读记录，不等于删除。最后一位家长不能直接退出留下无主家庭。</text></view>
+  </template>
+
+  <view v-if="inviteToken" class="family-panel family-generated-invite"><view class="family-panel-heading"><AppIcon name="family" size="38rpx" tone="blue"/><text class="section-title">{{invitePurpose==='CHILD_BIND'?'孩子绑定邀请':'共同家长邀请'}}</text></view><text class="family-panel-description">24 小时内、一次成功有效。只交给你确认的对应使用者。</text><text class="caption">有效至 {{dateTime(inviteExpires)}}</text><view class="code-box section">{{inviteToken}}</view><button class="primary full section" @tap="copyInvite">复制邀请令牌</button><text class="caption section">对方微信登录后需上传头像、填写昵称，再在家庭入口粘贴邀请。申请仍需负责人批准。</text></view>
+
+  <view v-if="pendingAction" class="family-panel family-confirm-panel"><view class="family-panel-heading"><AppIcon name="shield" size="38rpx" tone="orange"/><text class="section-title">确认{{({remove:'移除家长',transfer:'转让负责人',unbind:'解除绑定',approve:'批准申请',reject:'拒绝申请',archiveChild:'归档孩子',archiveFamily:'归档家庭',leave:'退出家庭'} as Record<string,string>)[pendingAction]}}</text></view><view class="notice warning section">{{pendingAction==='unbind'?'旧微信账号将立即不能再访问这个孩子，账本和历史保留。':pendingAction==='transfer'?'新负责人将获得邀请、移除和家庭数据管理权限。':pendingAction==='leave'?'退出后不能再访问这个家庭。负责人必须先转让，最后一名家长不能直接退出。':'请核对对象和操作后果，历史操作将被保留。'}}</view>
+    <template v-if="archive&&pendingAction.startsWith('archive')"><view v-if="!archive.canArchive" class="notice error">请先处理以下待办，不能自动批准或取消。</view><button v-for="o in archive.blockingOccurrences" :key="o.id" class="secondary full section" @tap="go('occurrence',{id:o.id})">处理完成记录：{{o.snapshot?.title||o.id}}</button><button v-for="o in archive.blockingOrders" :key="o.id" class="secondary full section" @tap="go('order',{id:o.id})">处理兑换：{{o.rewardSnapshot?.name||o.id}}</button><text v-if="archive.account" class="body-copy">保留只读账本：可用 {{archive.account.availablePoints}}、预留 {{archive.account.heldPoints}} 积分</text><view class="check-row" @tap="retain=!retain"><checkbox :checked="retain" color="#007AFF"/><text>我确认保留只读账本，归档不清零积分</text></view></template>
+    <view v-if="['remove','unbind','reject'].includes(pendingAction)" class="field"><text class="field-label">原因（必填）</text><textarea class="textarea" v-model="reason" maxlength="200"/></view>
+    <view v-if="pendingAction==='approve'&&applications.find(x=>x.id===selectedId)?.purpose==='CHILD_BIND'" class="check-row" @tap="syncProfile=!syncProfile"><checkbox :checked="syncProfile" color="#007AFF"/><text>将已验证的账号头像昵称同步到孩子档案</text></view>
+    <view v-if="['transfer','unbind','archiveFamily'].includes(pendingAction)" class="field"><text class="field-label">家长密码（如已设置）</text><input class="input" v-model="pin" password type="number" maxlength="6"/></view>
+    <view class="button-row"><button :class="{'is-disabled':busy}" class="primary" :loading="busy" :disabled="busy" @tap="execute">确认操作</button><button :class="{'is-disabled':busy}" class="secondary" :disabled="busy" @tap="pendingAction=''">暂不操作</button></view>
+  </view>
+</view>
+</AppShell>
+</template>
+
+<style lang="scss">
+.family-ui { color: #1c1c1e; }
+.family-overview { display: flex; align-items: center; gap: 26rpx; padding: 34rpx 28rpx; margin-bottom: 34rpx; background: #fff; border: 1rpx solid rgba(28,28,30,.035); border-radius: 40rpx; }
+.family-overline { display: block; font-size: 22rpx; font-weight: 600; line-height: 1.5; color: #8e8e93; letter-spacing: 1rpx; }
+.family-overview-title { display: block; margin: 7rpx 0 10rpx; font-size: 35rpx; font-weight: 650; line-height: 1.3; letter-spacing: -.6rpx; }
+.family-icon-tile { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 64rpx; height: 64rpx; border-radius: 20rpx; background: #edf5ff; }
+.family-icon-tile-large { width: 106rpx; height: 106rpx; border-radius: 34rpx; }
+.family-icon-neutral { background: #f2f3f7; }
+.family-icon-warm { background: #fff5e8; }
+.family-section-head { margin: 4rpx 6rpx 18rpx; }
+.family-add { display: flex; align-items: center; gap: 6rpx; font-size: 25rpx; }
+.family-children { display: flex; flex-direction: column; gap: 16rpx; }
+.family-child-card { display: flex; align-items: center; gap: 24rpx; min-height: 154rpx; padding: 26rpx; background: #fff; border-radius: 36rpx; border: 1rpx solid rgba(28,28,30,.035); }
+.family-child-name { display: block; margin-bottom: 7rpx; font-size: 32rpx; font-weight: 650; line-height: 1.4; }
+.family-archive-filter { margin: 10rpx 6rpx 26rpx; color: #8e8e93; font-size: 24rpx; }
+.family-group-label { margin: 34rpx 18rpx 14rpx; font-size: 24rpx; font-weight: 500; color: #8e8e93; line-height: 1.5; }
+.family-setting-group { overflow: hidden; padding: 0 26rpx; background: #fff; border: 1rpx solid rgba(28,28,30,.035); border-radius: 36rpx; }
+.family-setting-row { display: flex; align-items: center; gap: 20rpx; min-height: 116rpx; width: 100%; margin: 0; padding: 24rpx 0; border-radius: 0; background: transparent; text-align: left; line-height: 1.4; color: #1c1c1e; }
+.family-row-divider { border-top: 1rpx solid #f0f0f3; }
+.family-setting-copy { display: block; flex: 1; min-width: 0; }
+.family-setting-title { display: block; font-size: 28rpx; font-weight: 550; line-height: 1.45; }
+.family-setting-row .caption { margin-top: 5rpx; font-size: 23rpx; }
+.family-footnote { display: flex; align-items: flex-start; gap: 12rpx; padding: 24rpx 14rpx; color: #8e8e93; font-size: 23rpx; line-height: 1.65; }
+.family-panel { margin: 20rpx 0; padding: 30rpx; border-radius: 36rpx; background: #fff; border: 1rpx solid rgba(28,28,30,.035); }
+.family-panel-heading { display: flex; align-items: center; gap: 14rpx; }
+.family-panel-description { display: block; margin: 18rpx 0 8rpx; color: #636366; font-size: 26rpx; line-height: 1.7; }
+.family-edit-intro { padding: 4rpx 6rpx 16rpx; }
+.family-required { margin-left: 10rpx; color: #007aff; font-size: 22rpx; font-weight: 400; }
+.family-optional { margin-left: 10rpx; color: #8e8e93; font-size: 22rpx; font-weight: 400; }
+.family-select { display: flex; align-items: center; justify-content: space-between; }
+.family-save { margin: 26rpx 0; }
+.family-profile-header { display: flex; align-items: center; gap: 26rpx; margin: 4rpx 0 24rpx; padding: 30rpx; border-radius: 40rpx; background: #fff; }
+.family-profile-name { display: block; margin-bottom: 12rpx; font-size: 42rpx; font-weight: 680; letter-spacing: -1rpx; line-height: 1.25; }
+.family-profile-decoration { align-self: flex-start; padding-top: 8rpx; }
+.family-balance { margin-bottom: 20rpx; }
+.family-wish { display: flex; align-items: center; gap: 20rpx; padding: 26rpx; background: #fff; border-radius: 32rpx; }
+.family-wish .family-setting-title { margin-top: 6rpx; }
+.family-binding-panel { margin-top: 30rpx; }
+.family-invite-history { padding: 22rpx 0; margin-top: 14rpx; border-top: 1rpx solid #f0f0f3; }
+.family-inline-link { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; width: 100%; margin: 14rpx 0 0; padding: 18rpx 0 0; background: transparent; color: #007aff; text-align: left; font-size: 26rpx; line-height: 1.5; }
+.family-quiet-action { display: flex; align-items: center; justify-content: center; gap: 10rpx; margin: 24rpx auto; padding: 20rpx; background: transparent; color: #8e8e93; font-size: 25rpx; line-height: 1.5; }
+.family-tabs { margin-bottom: 28rpx; }
+.family-member-card { padding: 28rpx; }
+.family-member-actions { margin-top: 24rpx; padding-top: 22rpx; border-top: 1rpx solid #f0f0f3; }
+.family-applicant { margin: 24rpx 0 18rpx; }
+.family-generated-invite { border-color: #d8eaff; }
+.family-confirm-panel { border-color: #f0dfc3; margin-top: 32rpx; }
+</style>

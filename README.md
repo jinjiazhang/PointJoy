@@ -6,6 +6,7 @@
 
 ## 当前实现
 
+- 前端使用 uni-app / Vue 3 / TypeScript，32 个页面统一为 iOS 27 启发的简洁界面，包含玻璃导航、悬浮标签栏、家庭卡片与奖励确认浮层。见 [v1.1 界面实现说明](docs/mini-ui-v1.1.md)。
 - 微信登录后，先上传头像并保存昵称，再进入家庭业务；成人关系与孩子档案分开，支持邀请、负责人确认、解绑和成员撤权。
 - 日常计划按日期、版本和适用孩子生成历史实例；挑战保留发布时约定。支持草稿、可选完成照片、审核退回、家长补记、免做及原奖励撤销。
 - 积分账户分别记录可用与预留积分。兑换申请同时预留积分、库存和每周额度，家长批准后扣除预留；取消、拒绝和 72 小时到期按原价释放或退款。
@@ -107,7 +108,7 @@ npm run wechat:upload -- --preview
 上传前核对前端 `VITE_API_BASE_URL`、`apps/mini/src/manifest.json` 和 `scripts/upload-wechat.cjs` 的 AppID。脚本默认从仓库根读取 `private.wx5c24ed9df4175b79.key`，也可通过 `WECHAT_UPLOAD_KEY_PATH` 指向仓库外的绝对路径；私钥必须来自该小程序的微信后台，不能入 Git。实际上传使用：
 
 ```sh
-WECHAT_UPLOAD_KEY_PATH=/ABSOLUTE/PATH/TO/private.key WECHAT_VERSION=1.0.0 npm run wechat:upload
+WECHAT_UPLOAD_KEY_PATH=/ABSOLUTE/PATH/TO/private.key npm run wechat:upload
 ```
 
 可用 `WECHAT_DESC` 设置版本说明。预览二维码和工具结果保存在 `work/`。上传成功代表代码送达微信开发版本，后续体验、审核与发布以微信平台状态为准。
