@@ -8,6 +8,5 @@ node_modules/
 work/
 coverage/
 *.key
-pointjoy.yaml
-AppSecret
+*.secret
 .var/
