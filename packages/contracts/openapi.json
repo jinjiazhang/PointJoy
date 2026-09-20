@@ -3,7 +3,7 @@
   "info": {
     "title": "PointJoy 家庭版 API",
     "version": "1.0.0",
-    "description": "实际注册路由生成。请求和DTO模型与重建规格06配套；所有授权与参数边界由服务端执行。GET列表支持cursor/limit及文档中所列筛选；日期采用Asia/Shanghai。"
+    "description": "实际注册路由生成。请求和DTO模型与当前技术文档（06）配套；所有授权与参数边界由服务端执行。GET列表支持cursor/limit及文档中所列筛选；日期采用Asia/Shanghai。"
   },
   "servers": [
     {
