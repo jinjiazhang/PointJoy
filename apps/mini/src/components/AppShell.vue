@@ -9,7 +9,7 @@ defineEmits<{retry:[]}>();const session=useSession()
 const pendingCount=ref(currentPending().length);const refreshPending=()=>{pendingCount.value=currentPending().length}
 onMounted(()=>{uni.$on('operations:changed',refreshPending);uni.$on('auth:changed',refreshPending)})
 onUnmounted(()=>{uni.$off('operations:changed',refreshPending);uni.$off('auth:changed',refreshPending)})
-const navMetrics={height:48,status:0,right:18}
+const navMetrics={height:48,status:0,right:100}
 // #ifdef MP-WEIXIN
 navMetrics.status=24
 try{const info=uni.getSystemInfoSync(),capsule=uni.getMenuButtonBoundingClientRect();navMetrics.status=info.statusBarHeight||24;if(!capsule.width||capsule.bottom<=navMetrics.status)throw new Error('Capsule metrics unavailable');navMetrics.height=capsule.bottom+8;navMetrics.right=Math.max(100,info.windowWidth-capsule.left+12)}catch{navMetrics.height=navMetrics.status+44;navMetrics.right=108}
@@ -25,8 +25,8 @@ function switchTab(route:string){if(route!==props.tab)go(route as RouteName,{},t
   <view class="ambient ambient-blue"/><view class="ambient ambient-mint"/>
   <view class="system-bar" :style="{height:navMetrics.height+'px',paddingTop:navMetrics.status+'px',paddingRight:navMetrics.right+'px'}">
    <button v-if="back" class="nav-back" aria-label="返回上一页" @tap="navigateBack(session.isChild?'today':session.isGuardian?'home':'contexts')"><AppIcon name="arrow" size="38rpx"/></button>
-   <button v-else-if="tab&&!publicPage" class="nav-family" :aria-label="familyActionLabel" @tap="topAction"><text class="nav-family-name">{{familyLabel}}</text><view class="nav-family-chevron"><AppIcon name="chevron" tone="muted" size="24rpx"/></view></button>
-   <text v-if="title" class="nav-title">{{title}}</text>
+   <button v-else-if="tab&&!publicPage" class="nav-family" :style="{width:(navMetrics.right-24)+'px'}" :aria-label="familyActionLabel" @tap="topAction"><text class="nav-family-name">{{familyLabel}}</text><view class="nav-family-chevron"><AppIcon name="chevron" tone="muted" size="24rpx"/></view></button>
+   <view v-if="title" class="nav-heading" :style="{top:navMetrics.status+'px',left:navMetrics.right+'px',right:navMetrics.right+'px'}"><text class="nav-title">{{title}}</text></view>
   </view>
   <view class="page-body">
    <text v-if="subtitle" class="page-subtitle">{{subtitle}}</text>

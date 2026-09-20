@@ -59,7 +59,7 @@ function guardianName(g:Guardian){return g.user?.displayName||g.displayName||'�
   <template v-if="page==='family'">
     <view class="family-overview">
       <view class="family-icon-tile family-icon-tile-large"><AppIcon name="family" size="52rpx" tone="blue"/></view>
-      <view class="grow"><text class="family-overline">一起陪伴，慢慢长大</text><text class="family-overview-title">{{session.family?.family.name||'我们的家庭'}}</text><text class="caption">每个孩子，都有自己的成长节奏。</text></view>
+      <view class="grow"><text class="family-overline">一起陪伴，慢慢长大</text><button class="family-name-action" aria-label="切换家庭" @tap="go('contexts')"><text class="family-overview-title">{{session.family?.family.name||'我们的家庭'}}</text><AppIcon name="chevron" tone="muted" size="26rpx"/></button><text class="caption">每个孩子，都有自己的成长节奏。</text></view>
     </view>
     <view class="section-head family-section-head"><text class="section-title">孩子档案</text><button v-if="session.family?.family.status!=='ARCHIVED'" class="text-button family-add" @tap="go('childEdit')"><AppIcon name="plus" size="30rpx" tone="blue"/><text>添加孩子</text></button></view>
     <view class="family-children">
@@ -162,6 +162,7 @@ function guardianName(g:Guardian){return g.user?.displayName||g.displayName||'�
 .family-overview { display: flex; align-items: center; gap: 26rpx; padding: 34rpx 28rpx; margin-bottom: 34rpx; background: #fff; border: 1rpx solid rgba(28,28,30,.035); border-radius: 40rpx; }
 .family-overline { display: block; font-size: 22rpx; font-weight: 600; line-height: 1.5; color: #8e8e93; letter-spacing: 1rpx; }
 .family-overview-title { display: block; margin: 7rpx 0 10rpx; font-size: 35rpx; font-weight: 650; line-height: 1.3; letter-spacing: -.6rpx; }
+.family-name-action { display: flex; align-items: center; gap: 10rpx; margin: 0; padding: 0; background: transparent; border-radius: 0; text-align: left; }
 .family-icon-tile { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 64rpx; height: 64rpx; border-radius: 20rpx; background: #edf5ff; }
 .family-icon-tile-large { width: 106rpx; height: 106rpx; border-radius: 34rpx; }
 .family-icon-neutral { background: #f2f3f7; }

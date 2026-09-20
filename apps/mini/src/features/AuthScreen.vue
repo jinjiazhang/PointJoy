@@ -14,6 +14,7 @@ import {go} from '../services/navigation'
 import {dateTime,label} from '../services/format'
 import type {Profile,UploadItem,Context,Tokens,SessionView,Application,PageResult,PrivacyRequest,FamilyContext} from '../services/types'
 const props=defineProps<{page:string;query:Record<string,string>}>()
+const restoring=ref(props.page==='login')
 const privacy=ref<{policyVersion:string;content:string;supportContact?:string}|null>(null),consent=ref(false),name=ref(''),avatar=ref<UploadItem[]>([]),profile=ref<Profile|null>(null),contexts=ref<Context[]>([]),familyName=ref(''),token=ref(''),purpose=ref('GUARDIAN_JOIN'),preview=ref<{purpose:string;familyName:string;childNickname?:string;expiresAt:string;canApply:boolean}|null>(null),applications=ref<Application[]>([]),pin=ref(''),newPin=ref(''),confirmPin=ref(''),recoveryCode=ref(''),enrollmentId=ref(''),recoverySaved=ref(false),localCode=ref(''),pinMode=ref(''),pending=ref<PendingOperation[]>([]),supportDescription=ref(''),supportRequest=ref<PrivacyRequest|null>(null),privacyRequests=ref<PrivacyRequest[]>([]),requestType=ref('EXPORT'),requestScope=ref('SELF_ACCOUNT'),confirmation=ref(''),requestNote=ref('')
 const receiptViews=ref<ReceiptView[]>([]),receiptError=ref('')
 const nicknameError=ref('')
@@ -39,9 +40,9 @@ localAuth=import.meta.env.DEV&&import.meta.env.VITE_LOCAL_AUTH==='true'
 const title=computed(()=>({login:'给努力一点回应',profile:'完善资料',contexts:'我的家庭',invite:'接受家庭邀请',pin:'请家长验证',recovery:'确认操作',account:'我的账号',privacy:'隐私与数据'}[props.page]||'积乐圈'))
 const {loading,error,busy,reload,act,session}=usePage(props.page,load,'public')
 async function load(){
- if(['login','privacy','profile','account'].includes(props.page))privacy.value=await get('/public/privacy')
+ if(props.page==='login'){restoring.value=true;if(await session.resume())return;restoring.value=false;privacy.value=await get('/public/privacy');return}
+ if(['privacy','profile','account'].includes(props.page))privacy.value=await get('/public/privacy')
  if(props.page==='privacy')await loadReceipts()
- if(props.page==='login')return
  await session.bootstrap()
  if(props.page==='privacy'&&!session.view)return
  if(!session.view){go('login',{},true);return}
@@ -89,8 +90,9 @@ async function download(req:PrivacyRequest){await act(async()=>{const grant=awai
 // Native nickname recommendations may only update on blur/form submit.
 const canProfileSave=computed(()=>!loading.value&&!wechatPrivacyNeeded.value&&avatar.value.length===1&&avatar.value[0].status==='READY')
 </script>
-<template><AppShell :title="page==='login'?'微信登录':title" :public-page="['login','profile','pin'].includes(page)" :back="!['login','profile','contexts','pin'].includes(page)" :loading="loading" :error="error" @retry="reload">
-<template v-if="page==='login'">
+<template><AppShell :title="page==='login'?(restoring?'积乐圈':'微信登录'):title" :public-page="['login','profile','pin'].includes(page)" :back="!['login','profile','contexts','pin'].includes(page)||(page==='contexts'&&(session.isGuardian||session.isChild))" :loading="loading" :error="error" @retry="reload">
+<template v-if="page==='login'&&restoring"><text v-if="!error" class="caption">正在回到你的家庭…</text></template>
+<template v-else-if="page==='login'">
 <view class="welcome-screen"><view class="welcome-art"><view class="welcome-halo halo-one"/><view class="welcome-halo halo-two"/><view class="welcome-orb"><view class="welcome-symbol"><AppIcon name="sparkle" tone="blue" size="100rpx"/></view></view><view class="welcome-floating welcome-complete"><view class="welcome-mini-icon"><AppIcon name="check" tone="green" size="30rpx"/></view><text>完成一个小目标</text></view><view class="welcome-floating welcome-wish"><view class="welcome-mini-icon wish-icon"><AppIcon name="gift" tone="blue" size="32rpx"/></view><text>离心愿近一点</text></view></view>
 <text class="welcome-eyebrow">给努力一点回应</text><text class="welcome-title">小小努力，{{'\n'}}大大期待。</text><text class="welcome-copy">一起约定日常，记录每一点成长。{{'\n'}}把孩子的努力，变成可以期待的奖励。</text>
 <view class="welcome-bottom"><view class="welcome-consent" @tap="consent=!consent"><checkbox :checked="consent" color="#007AFF"/><text>我已阅读并同意</text><button class="welcome-privacy" @tap.stop="go('privacy')">隐私说明</button></view>

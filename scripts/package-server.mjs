@@ -9,5 +9,5 @@ pkg.engines={node:'>=24 <25'};
 await fs.writeFile(path.join(target,'api/package.json'),JSON.stringify(pkg,null,2));
 await fs.cp('apps/api/dist',path.join(target,'api/dist'),{recursive:true});await fs.cp('apps/api/migrations',path.join(target,'api/migrations'),{recursive:true});await fs.cp('ops/site',path.join(target,'site'),{recursive:true});await fs.cp('ops',path.join(target,'ops'),{recursive:true});
 execFileSync('npm',['install','--package-lock-only','--omit=dev','--ignore-scripts','--no-fund'],{cwd:path.join(target,'api'),stdio:'inherit'});
-execFileSync('tar',['-czf',path.join(root,'work/pointjoy-server-release.tgz'),'-C',target,'.'],{stdio:'inherit'});
+execFileSync('tar',['--no-xattrs','-czf',path.join(root,'work/pointjoy-server-release.tgz'),'-C',target,'.'],{stdio:'inherit',env:{...process.env,COPYFILE_DISABLE:'1'}});
 console.log('Release package: work/pointjoy-server-release.tgz');
