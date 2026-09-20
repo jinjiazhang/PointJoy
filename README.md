@@ -69,18 +69,20 @@ createdb pointjoy_privacy_maintenance_qa
 npm run check
 ```
 
-`npm run check` 执行所有类型检查、全部测试、API 编译以及 H5 / 微信小程序构建。也可单独执行 `npm run typecheck`、`npm test` 或 `npm run build`。
+`npm run check` 执行 ESLint、格式检查、所有类型检查、全部测试、API 编译以及 H5 / 微信小程序构建。也可单独执行 `npm run lint`、`npm run typecheck`、`npm test` 或 `npm run build`。
 
-截至该次实现验证，全部 **106 项测试通过**，按测试运行器计数（包括父测试）：
+代码使用 2 空格缩进、单引号、分号和 100 列换行，由 Prettier 统一处理。修改后运行 `npm run format`；规范及模块职责见 [代码规范](docs/代码规范.md)。
+
+截至该次实现验证，全部 **119 项测试通过**，按测试运行器计数（包括父测试）：
 
 | 测试 | 数量 | 数据库配置 |
 | --- | --- | --- |
 | HTTP 完整业务流程 | 23 | `TEST_DATABASE_URL`；库名固定 `pointjoy_rebuild_test` |
-| 领域并发和账务不变量 | 14 | `DOMAIN_TEST_DATABASE_URL`；库名固定 `pointjoy_domain_test` |
+| 领域并发和账务不变量 | 15 | `DOMAIN_TEST_DATABASE_URL`；库名固定 `pointjoy_domain_test` |
 | 身份、权限和隐私安全 | 16 | `localhost/pointjoy_identity_qa_20260919` |
 | 真实备份恢复与日志重放 | 13 | `RECOVERY_TEST_DATABASE_URL`；库名固定 `pointjoy_recovery_test` |
 | 隐私维护及备份轮换确认 | 10 | `localhost/pointjoy_privacy_maintenance_qa` |
-| 前端传输、图片保存与操作恢复 | 30 | 无数据库 |
+| 前端传输、图片保存与操作恢复 | 42 | 无数据库 |
 
 未指定 URL 时，测试默认使用本机 PostgreSQL。身份和隐私维护测试使用固定本机库名，通过 `PGUSER`、`PGPASSWORD`、`PGPORT` 指定角色和连接参数；CI 已为这五个隔离库配置独立实例。恢复测试可通过 `PG_DUMP_BIN`、`PG_RESTORE_BIN` 指定 PostgreSQL 16 客户端路径。
 

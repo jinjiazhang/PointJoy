@@ -83,7 +83,7 @@ jobs:
           npm run migrate:deploy
           npm run migrate:deploy
 
-      - name: Typecheck, run all 106 tests, and build API, H5, and WeChat
+      - name: Lint, typecheck, test, and build API, H5, and WeChat
         run: npm run check
 
       - name: Verify build outputs

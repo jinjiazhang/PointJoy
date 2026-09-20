@@ -10,48 +10,632 @@ import { loadConfig } from '../../apps/api/src/common/config.js';
 import { migrate } from '../../apps/api/src/migrate.js';
 import { runMediaJobs } from '../../apps/api/src/media/index.js';
 
-const databaseUrl=process.env.TEST_DATABASE_URL||'postgresql://localhost/pointjoy_rebuild_test';
-if(!new URL(databaseUrl).pathname.endsWith('/pointjoy_rebuild_test'))throw new Error('Tests only reset the explicit pointjoy_rebuild_test database');
-const testRoot=path.resolve('.var/test-'+randomUUID());
-const config={...loadConfig({APP_ENV:'local',DATABASE_URL:databaseUrl}),appEnv:'test',mediaDir:path.join(testRoot,'media'),exportDir:path.join(testRoot,'exports'),securityJournalDir:path.join(testRoot,'security')};
-let app:any,services:any;
-const prefix='/api/v1';
-type Client={token:string,refresh:string,userId?:string,session:any};
-async function call(c:Client|null,method:string,url:string,body?:any,key?:string){const response=await app.inject({method,url:url.startsWith(prefix)?url:prefix+url,headers:{...(c?{authorization:'Bearer '+c.token}:{}),...(method!=='GET'?{'idempotency-key':key||randomUUID()}:{}),...(body!==undefined?{'content-type':'application/json'}:{})},...(body!==undefined?{payload:body}:{})});let result:any;try{result=response.json();}catch{result=response.body;}return{status:response.statusCode,data:result?.data,error:result?.error,body:result,response};}
-async function good(c:Client|null,method:string,url:string,body?:any,key?:string){const r=await call(c,method,url,body,key);assert.ok(r.status>=200&&r.status<300&&!r.error,`${method} ${url}: ${r.status} ${JSON.stringify(r.body)}`);return r.data;}
-async function login(subject:string):Promise<Client>{const d=await good(null,'POST','/auth/wechat/login',{code:'local:'+subject,loginAttemptId:randomUUID()});return{token:d.accessToken,refresh:d.refreshToken,session:d.session};}
-function tokens(c:Client,d:any){c.token=d.accessToken;c.refresh=d.refreshToken;c.session=d.session;}
-async function upload(c:Client,purpose:string,scope:any={}){const bytes=await sharp({create:{width:48,height:32,channels:3,background:'#3C806D'}}).png().toBuffer();const intent=await good(c,'POST','/media/upload-intents',{purpose,filename:'test.png',mime:'image/png',sizeBytes:bytes.length,...scope});const boundary='PointJoy'+randomUUID();const payload=Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="test.png"\r\nContent-Type: image/png\r\n\r\n`),bytes,Buffer.from(`\r\n--${boundary}--\r\n`)]);const res=await app.inject({method:'POST',url:new URL(intent.uploadUrl).pathname,headers:{'content-type':`multipart/form-data; boundary=${boundary}`},payload});assert.equal(res.statusCode,200,res.body);await good(c,'POST',`/media/${intent.mediaId}/finish`,{});await runMediaJobs(services);const media=await good(c,'GET',`/media/${intent.mediaId}`);assert.equal(media.status,'READY',JSON.stringify(media));return media;}
-async function profile(c:Client,name:string){const media=await upload(c,'USER_AVATAR');const p=await good(c,'GET','/me/profile');const operationKey=randomUUID();const result=await good(c,'PUT','/me/profile',{displayName:name,avatarMediaId:media.id,privacyVersion:config.privacyVersion,expectedVersion:p.version},operationKey);media.profileOperationKey=operationKey;c.userId=result.profile.id;c.session=result.session;return media;}
-async function family(c:Client,name:string){const f=await good(c,'POST','/families',{name});tokens(c,await good(c,'POST','/auth/context',{contextId:f.contextId}));return f.family.id;}
-async function child(c:Client,f:string,name:string){const draft=await good(c,'POST',`/families/${f}/child-drafts`,{});const m=await upload(c,'CHILD_AVATAR',{familyId:f,childDraftId:draft.childDraftId});return good(c,'POST',`/families/${f}/children`,{childDraftId:draft.childDraftId,nickname:name,avatarMediaId:m.id,ageBand:'AGE_7_9'});}
-async function context(c:Client,fid:string){const list=await good(c,'GET','/me/contexts');const item=(list.items||list).find((x:any)=>x.family.id===fid);assert.ok(item);tokens(c,await good(c,'POST','/auth/context',{contextId:item.contextId}));}
+const databaseUrl = process.env.TEST_DATABASE_URL || 'postgresql://localhost/pointjoy_rebuild_test';
+if (!new URL(databaseUrl).pathname.endsWith('/pointjoy_rebuild_test')) {
+  throw new Error('Tests only reset the explicit pointjoy_rebuild_test database');
+}
+const testRoot = path.resolve('.var/test-' + randomUUID());
+const config = {
+  ...loadConfig({ APP_ENV: 'local', DATABASE_URL: databaseUrl }),
+  appEnv: 'test',
+  mediaDir: path.join(testRoot, 'media'),
+  exportDir: path.join(testRoot, 'exports'),
+  securityJournalDir: path.join(testRoot, 'security'),
+};
+let app: any;
+let services: any;
+const prefix = '/api/v1';
+type Client = { token: string; refresh: string; userId?: string; session: any };
+async function call(c: Client | null, method: string, url: string, body?: any, key?: string) {
+  const response = await app.inject({
+    method,
+    url: url.startsWith(prefix) ? url : prefix + url,
+    headers: {
+      ...(c ? { authorization: 'Bearer ' + c.token } : {}),
+      ...(method !== 'GET' ? { 'idempotency-key': key || randomUUID() } : {}),
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+    },
+    ...(body !== undefined ? { payload: body } : {}),
+  });
+  let result: any;
+  try {
+    result = response.json();
+  } catch {
+    result = response.body;
+  }
+  return {
+    status: response.statusCode,
+    data: result?.data,
+    error: result?.error,
+    body: result,
+    response,
+  };
+}
+async function good(c: Client | null, method: string, url: string, body?: any, key?: string) {
+  const r = await call(c, method, url, body, key);
+  assert.ok(
+    r.status >= 200 && r.status < 300 && !r.error,
+    `${method} ${url}: ${r.status} ${JSON.stringify(r.body)}`,
+  );
+  return r.data;
+}
+async function login(subject: string): Promise<Client> {
+  const d = await good(null, 'POST', '/auth/wechat/login', {
+    code: 'local:' + subject,
+    loginAttemptId: randomUUID(),
+  });
+  return { token: d.accessToken, refresh: d.refreshToken, session: d.session };
+}
+function tokens(c: Client, d: any) {
+  c.token = d.accessToken;
+  c.refresh = d.refreshToken;
+  c.session = d.session;
+}
+async function upload(c: Client, purpose: string, scope: any = {}) {
+  const bytes = await sharp({
+    create: { width: 48, height: 32, channels: 3, background: '#3C806D' },
+  })
+    .png()
+    .toBuffer();
+  const intent = await good(c, 'POST', '/media/upload-intents', {
+    purpose,
+    filename: 'test.png',
+    mime: 'image/png',
+    sizeBytes: bytes.length,
+    ...scope,
+  });
+  const boundary = 'PointJoy' + randomUUID();
+  const payload = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="test.png"\r\nContent-Type: image/png\r\n\r\n`,
+    ),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  const res = await app.inject({
+    method: 'POST',
+    url: new URL(intent.uploadUrl).pathname,
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+    payload,
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  await good(c, 'POST', `/media/${intent.mediaId}/finish`, {});
+  await runMediaJobs(services);
+  const media = await good(c, 'GET', `/media/${intent.mediaId}`);
+  assert.equal(media.status, 'READY', JSON.stringify(media));
+  return media;
+}
+async function profile(c: Client, name: string) {
+  const media = await upload(c, 'USER_AVATAR');
+  const p = await good(c, 'GET', '/me/profile');
+  const operationKey = randomUUID();
+  const result = await good(
+    c,
+    'PUT',
+    '/me/profile',
+    {
+      displayName: name,
+      avatarMediaId: media.id,
+      privacyVersion: config.privacyVersion,
+      expectedVersion: p.version,
+    },
+    operationKey,
+  );
+  media.profileOperationKey = operationKey;
+  c.userId = result.profile.id;
+  c.session = result.session;
+  return media;
+}
+async function family(c: Client, name: string) {
+  const f = await good(c, 'POST', '/families', { name });
+  tokens(c, await good(c, 'POST', '/auth/context', { contextId: f.contextId }));
+  return f.family.id;
+}
+async function child(c: Client, f: string, name: string) {
+  const draft = await good(c, 'POST', `/families/${f}/child-drafts`, {});
+  const m = await upload(c, 'CHILD_AVATAR', { familyId: f, childDraftId: draft.childDraftId });
+  return good(c, 'POST', `/families/${f}/children`, {
+    childDraftId: draft.childDraftId,
+    nickname: name,
+    avatarMediaId: m.id,
+    ageBand: 'AGE_7_9',
+  });
+}
+async function context(c: Client, fid: string) {
+  const list = await good(c, 'GET', '/me/contexts');
+  const item = (list.items || list).find((x: any) => x.family.id === fid);
+  assert.ok(item);
+  tokens(c, await good(c, 'POST', '/auth/context', { contextId: item.contextId }));
+}
 
-test('real PostgreSQL identity, media, activity and reward workflows',async t=>{
- const pool=new pg.Pool({connectionString:databaseUrl});await pool.query('DROP SCHEMA public CASCADE');await pool.query('CREATE SCHEMA public');await migrate(pool);await pool.end();
- ({app,services}=await buildApp(config));await app.ready();
- t.after(async()=>{await app.close();await fs.rm(testRoot,{recursive:true,force:true});});
- let parent:Client,other:Client,kid:Client,fid:string,c1:any,c2:any,occ:any,plan:any,reward:any,order:any,pinRecovery:string,photo:any;
- await t.test('authentication is required and profile gates all business',async()=>{assert.equal((await call(null,'GET','/me/contexts')).status,401);parent=await login('integration-parent');assert.equal(parent.session.mode,'PROFILE_ONLY');assert.equal((await call(parent,'POST','/families',{name:'不能创建'})).error.code,'PROFILE_REQUIRED');assert.equal((await call(parent,'PUT','/me/profile',{displayName:'家长',avatarMediaId:randomUUID(),privacyVersion:config.privacyVersion,expectedVersion:1})).status,404);});
- await t.test('real upload normalizes avatar and enables account in same session',async()=>{photo=await profile(parent,'林爸爸');assert.equal(parent.session.mode,'ACCOUNT');const recovered=await good(parent,'GET','/operations/'+photo.profileOperationKey+'?method=PUT&path='+encodeURIComponent('/me/profile'));assert.equal(recovered.state,'SUCCEEDED');assert.equal(recovered.result.session.mode,'ACCOUNT');assert.equal(photo.width,512);assert.equal(photo.height,512);const grant=await good(parent,'POST',`/media/${photo.id}/read-grants`,{});const response=await app.inject({method:'GET',url:new URL(grant.readUrl).pathname});assert.equal(response.statusCode,200);const metadata=await sharp(response.rawPayload).metadata();assert.equal(metadata.format,'jpeg');assert.equal(metadata.exif,undefined);});
- await t.test('family creates unique owner and two separate child accounts',async()=>{fid=await family(parent,'林家成长小队');c1=await child(parent,fid,'小禾');c2=await child(parent,fid,'小满');assert.notEqual(c1.id,c2.id);assert.equal(c1.account.availablePoints,0);assert.equal(c2.account.availablePoints,0);const f=await good(parent,'GET',`/families/${fid}`);assert.equal(f.membership.role,'OWNER');assert.equal(f.childrenSummary.length,2);});
- await t.test('WeChat POST method override preserves PATCH authorization and idempotency',async()=>{const key=randomUUID(),body={name:'林家成长小队新版',expectedVersion:1};const r=await app.inject({method:'POST',url:prefix+'/families/'+fid,headers:{authorization:'Bearer '+parent.token,'content-type':'application/json','idempotency-key':key,'x-http-method-override':'PATCH'},payload:body});assert.equal(r.statusCode,200,r.body);assert.equal(r.json().data.version,2);const replay=await call(parent,'PATCH','/families/'+fid,body,key);assert.equal(replay.response.headers['idempotency-replayed'],'true');const recovered=await good(parent,'GET','/operations/'+key+'?method=PATCH&path='+encodeURIComponent('/families/'+fid));assert.equal(recovered.state,'SUCCEEDED');const invalid=await app.inject({method:'POST',url:prefix+'/families/'+fid,headers:{authorization:'Bearer '+parent.token,'x-http-method-override':'DELETE'}});assert.equal(invalid.statusCode,400);});
- await t.test('unrelated account cannot view family, child or private images',async()=>{other=await login('integration-outsider');await profile(other,'另一位家长');assert.equal((await call(other,'GET',`/families/${fid}`)).status,404);assert.equal((await call(other,'GET',`/families/${fid}/children/${c1.id}/account`)).status,404);assert.equal((await call(other,'POST',`/media/${photo.id}/read-grants`,{})).status,404);});
- await t.test('plan publication creates today snapshot and future preview stays read only',async()=>{plan=await good(parent,'POST',`/families/${fid}/plans`,{type:'ROUTINE',title:'跳绳100次',description:'按自己的节奏完成',metric:'COUNT',targetValue:100,unit:'REP',awardPoints:20,childIds:[c1.id,c2.id],weekdays:[1,2,3,4,5,6,7]});plan=await good(parent,'POST',`/families/${fid}/plans/${plan.id}/publish`,{startPolicy:'TODAY',expectedVersion:plan.version});const today=await good(parent,'GET',`/families/${fid}/children/${c1.id}/today`);occ=today.routines[0];assert.equal(occ.snapshot.awardPoints,20);assert.equal(occ.status,'OPEN');});
- await t.test('draft may be below target but formal completion must reach target',async()=>{const draft=await good(parent,'PUT',`/families/${fid}/occurrences/${occ.id}/draft`,{actualValue:50,note:'先完成一半',mediaIds:[],expectedOccurrenceVersion:occ.version,expectedDraftVersion:0});assert.equal(draft.occurrenceVersion,occ.version);const invalid=await call(parent,'POST',`/families/${fid}/occurrences/${occ.id}/submissions`,{actualValue:99,mediaIds:[],expectedVersion:occ.version});assert.equal(invalid.error.code,'TARGET_NOT_MET');});
- await t.test('delegation requires PIN enrollment and revokes the previous parent token',async()=>{assert.equal((await call(parent,'POST','/auth/child-mode',{familyId:fid,childId:c1.id})).error.code,'PIN_REQUIRED');const enrolled=await good(parent,'POST','/auth/pin/enroll',{pin:'246810',confirmationPin:'246810'});pinRecovery=enrolled.recoveryCode;assert.ok(pinRecovery.replaceAll('-','').length>=32);await good(parent,'POST','/auth/pin/enroll/confirm',{enrollmentId:enrolled.enrollmentId,recoverySaved:true});const old={...parent};tokens(parent,await good(parent,'POST','/auth/child-mode',{familyId:fid,childId:c1.id}));assert.equal(parent.session.childSessionSource,'DELEGATED');assert.equal((await call(old,'GET',`/families/${fid}`)).status,401);assert.equal((await call(parent,'GET','/me/profile')).status,403);assert.equal((await call(parent,'GET','/me/contexts')).status,403);assert.equal((await call(parent,'GET',`/families/${fid}/children/${c2.id}/today`)).status,404);});
- await t.test('child submits ready optional photo and receives no points before review',async()=>{const m=await upload(parent,'COMPLETION_EVIDENCE',{familyId:fid,childId:c1.id,occurrenceId:occ.id});const result=await good(parent,'POST',`/families/${fid}/occurrences/${occ.id}/submissions`,{actualValue:100,note:'我完成啦',mediaIds:[m.id],expectedVersion:occ.version});occ=result.occurrence||result;assert.equal(occ.status,'SUBMITTED');assert.equal((await good(parent,'GET',`/families/${fid}/children/${c1.id}/account`)).availablePoints,0);assert.equal((await call(parent,'POST',`/families/${fid}/occurrences/${occ.id}/review`,{decision:'APPROVE',expectedVersion:occ.version})).status,403);});
- await t.test('PIN exit restores parent and concurrent reviews award exactly once',async()=>{assert.equal((await call(parent,'POST','/auth/child-mode/exit',{pin:'000000'})).status,403);tokens(parent,await good(parent,'POST','/auth/child-mode/exit',{pin:'246810'}));const [a,b]=await Promise.all([call(parent,'POST',`/families/${fid}/occurrences/${occ.id}/review`,{decision:'APPROVE',expectedVersion:occ.version}),call(parent,'POST',`/families/${fid}/occurrences/${occ.id}/review`,{decision:'APPROVE',expectedVersion:occ.version})]);assert.equal([a,b].filter(x=>x.status===200).length,1,JSON.stringify([a,b]));assert.equal((await good(parent,'GET',`/families/${fid}/children/${c1.id}/account`)).availablePoints,20);});
- await t.test('same operation key replays once and different body is rejected',async()=>{const key=randomUUID(),body={points:100,reason:'认真坚持'};const first=await good(parent,'POST',`/families/${fid}/children/${c1.id}/praises`,body,key);const again=await call(parent,'POST',`/families/${fid}/children/${c1.id}/praises`,body,key);assert.equal(again.response.headers['idempotency-replayed'],'true');assert.equal(again.data.account.version,first.account.version);assert.equal((await call(parent,'POST',`/families/${fid}/children/${c1.id}/praises`,{points:101,reason:'认真坚持'},key)).error.code,'IDEMPOTENCY_MISMATCH');});
- await t.test('rewards start as draft then become available with finite stock',async()=>{reward=await good(parent,'POST',`/families/${fid}/rewards`,{name:'游戏20分钟',description:'周末一起约定',category:'TIME',benefitDescription:'一次游戏20分钟',timeMinutes:20,artKey:'game',costPoints:30,stockMode:'FINITE',initialStock:2,weeklyLimit:2,childIds:[c1.id,c2.id]});assert.equal(reward.status,'DRAFT');reward=await good(parent,'POST',`/families/${fid}/rewards/${reward.id}/status`,{status:'ACTIVE',expectedVersion:reward.version});await good(parent,'PUT',`/families/${fid}/children/${c1.id}/wish`,{rewardId:reward.id});});
- await t.test('request reserves points, stock and quota without capturing',async()=>{const d=await good(parent,'POST',`/families/${fid}/children/${c1.id}/orders`,{rewardId:reward.id,expectedRewardVersion:reward.version,expectedCostPoints:30});order=d.order;assert.equal(order.status,'PENDING_APPROVAL');assert.equal(d.account.availablePoints,90);assert.equal(d.account.heldPoints,30);assert.equal((await good(parent,'GET',`/families/${fid}/rewards/${reward.id}`)).stockAvailable,1);});
- await t.test('approval captures held points and fulfillment never deducts twice',async()=>{const d=await good(parent,'POST',`/families/${fid}/orders/${order.id}/approve`,{arrangementNote:'周六午饭后',expectedVersion:order.version});order=d.order;assert.equal(order.status,'READY');assert.equal(d.account.availablePoints,90);assert.equal(d.account.heldPoints,0);const accountVersion=d.account.version;const done=await good(parent,'POST',`/families/${fid}/orders/${order.id}/fulfill`,{expectedVersion:order.version,note:'已一起完成'});order=done.order||done;assert.equal(order.status,'FULFILLED');assert.equal((await good(parent,'GET',`/families/${fid}/children/${c1.id}/account`)).version,accountVersion);assert.equal((await call(parent,'POST',`/families/${fid}/orders/${order.id}/cancel`,{expectedVersion:order.version,reason:'不能撤销已兑现'})).status,409);});
- await t.test('pending cancellation releases original price and stock exactly once',async()=>{let d=await good(parent,'POST',`/families/${fid}/children/${c1.id}/orders`,{rewardId:reward.id,expectedRewardVersion:reward.version,expectedCostPoints:30});const pending=d.order;d=await good(parent,'POST',`/families/${fid}/orders/${pending.id}/cancel`,{reason:'今天暂时不需要',expectedVersion:pending.version});assert.equal(d.account.availablePoints,90);assert.equal(d.account.heldPoints,0);assert.equal((await good(parent,'GET',`/families/${fid}/rewards/${reward.id}`)).stockAvailable,1);});
- await t.test('ready cancellation refunds original order price after reward repricing',async()=>{let d=await good(parent,'POST',`/families/${fid}/children/${c1.id}/orders`,{rewardId:reward.id,expectedRewardVersion:reward.version,expectedCostPoints:30});d=await good(parent,'POST',`/families/${fid}/orders/${d.order.id}/approve`,{expectedVersion:d.order.version});const ready=d.order;reward=await good(parent,'PATCH',`/families/${fid}/rewards/${reward.id}`,{costPoints:40,expectedVersion:reward.version});d=await good(parent,'POST',`/families/${fid}/orders/${ready.id}/cancel`,{reason:'本周改天安排',expectedVersion:ready.version});assert.equal(d.account.availablePoints,90);assert.equal(d.account.heldPoints,0);});
- await t.test('stale price confirmation fails without holding points',async()=>{const r=await call(parent,'POST',`/families/${fid}/children/${c1.id}/orders`,{rewardId:reward.id,expectedRewardVersion:reward.version-1,expectedCostPoints:30});assert.equal(r.error.code,'REWARD_CHANGED');assert.equal((await good(parent,'GET',`/families/${fid}/children/${c1.id}/account`)).heldPoints,0);});
- await t.test('child binding needs own complete profile and owner approval',async()=>{kid=await login('integration-direct-child');await profile(kid,'小禾的微信');const invite=await good(parent,'POST',`/families/${fid}/children/${c1.id}/binding-invitations`,{});const preview=await good(kid,'POST','/child-bindings/preview',{token:invite.token});assert.equal(preview.purpose,'CHILD_BIND');const application=await good(kid,'POST','/child-binding-applications',{token:invite.token});assert.equal((await good(kid,'GET','/me/contexts')).items.length,0);await good(parent,'POST',`/families/${fid}/child-binding-applications/${application.id}/decision`,{decision:'APPROVE',syncProfile:false,expectedVersion:application.version});await context(kid,fid);assert.equal(kid.session.childSessionSource,'DIRECT');assert.equal((await call(kid,'POST','/auth/child-mode/exit',{pin:'246810'})).status,403);assert.equal((await good(kid,'GET',`/families/${fid}/children/${c1.id}/account`)).availablePoints,90);});
- await t.test('DIRECT child cannot create plans, praise or inspect sibling',async()=>{assert.equal((await call(kid,'POST',`/families/${fid}/children/${c1.id}/praises`,{points:100,reason:'自己加分'})).status,403);assert.equal((await call(kid,'GET',`/families/${fid}/children/${c2.id}/account`)).status,404);assert.equal((await call(kid,'GET',`/families/${fid}/guardians`)).status,403);assert.equal((await good(kid,'GET','/me/profile')).displayName,'小禾的微信');});
- await t.test('unlink revokes direct session and private read grants but preserves account',async()=>{const me=await good(kid,'GET','/me/profile'),grant=await good(kid,'POST',`/media/${me.avatarMediaId}/read-grants`,{});c1=await good(parent,'GET',`/families/${fid}/children/${c1.id}`);const step=await good(parent,'POST','/auth/step-up',{pin:'246810',action:'UNBIND_CHILD'});await good(parent,'POST',`/families/${fid}/children/${c1.id}/unbind`,{reason:'换一个微信账号',expectedBindingVersion:c1.bindingVersion,stepUpToken:step.stepUpToken});assert.equal((await call(kid,'GET','/auth/session')).status,401);const r=await app.inject({method:'GET',url:new URL(grant.readUrl).pathname});assert.equal(r.statusCode,401);assert.equal((await good(parent,'GET',`/families/${fid}/children/${c1.id}/account`)).availablePoints,90);});
- await t.test('fresh WeChat login cannot bypass a parent PIN',async()=>{const fresh=await login('integration-parent');assert.equal(fresh.session.mode,'LOCKED');assert.equal((await call(fresh,'GET','/me/contexts')).error.code,'PIN_REQUIRED');for(let i=0;i<5;i++)assert.equal((await call(fresh,'POST','/auth/pin/unlock',{pin:'000000'})).status,403);const locked=await call(fresh,'POST','/auth/pin/unlock',{pin:'246810'});assert.equal(locked.status,429);});
- await t.test('account and immutable ledger reconcile after all operations',async()=>{const result=await services.pool.query(`SELECT a.child_id FROM point_accounts a LEFT JOIN (SELECT family_id,child_id,COALESCE(sum(available_delta),0) av,COALESCE(sum(held_delta),0) held,count(*) n FROM point_ledger GROUP BY family_id,child_id) l USING(family_id,child_id) WHERE a.available_points<>COALESCE(l.av,0) OR a.held_points<>COALESCE(l.held,0) OR a.version<>COALESCE(l.n,0)`);assert.equal(result.rowCount,0);const count=await services.pool.query("SELECT count(*) n FROM point_ledger WHERE type='ACTIVITY_AWARD'");assert.equal(Number(count.rows[0].n),1);});
+test('real PostgreSQL identity, media, activity and reward workflows', async (t) => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  await pool.query('DROP SCHEMA public CASCADE');
+  await pool.query('CREATE SCHEMA public');
+  await migrate(pool);
+  await pool.end();
+  ({ app, services } = await buildApp(config));
+  await app.ready();
+  t.after(async () => {
+    await app.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  });
+  let parent: Client;
+  let other: Client;
+  let kid: Client;
+  let fid: string;
+  let c1: any;
+  let c2: any;
+  let occ: any;
+  let plan: any;
+  let reward: any;
+  let order: any;
+  let pinRecovery: string;
+  let photo: any;
+  await t.test('authentication is required and profile gates all business', async () => {
+    assert.equal((await call(null, 'GET', '/me/contexts')).status, 401);
+    parent = await login('integration-parent');
+    assert.equal(parent.session.mode, 'PROFILE_ONLY');
+    assert.equal(
+      (await call(parent, 'POST', '/families', { name: '不能创建' })).error.code,
+      'PROFILE_REQUIRED',
+    );
+    assert.equal(
+      (
+        await call(parent, 'PUT', '/me/profile', {
+          displayName: '家长',
+          avatarMediaId: randomUUID(),
+          privacyVersion: config.privacyVersion,
+          expectedVersion: 1,
+        })
+      ).status,
+      404,
+    );
+  });
+  await t.test('real upload normalizes avatar and enables account in same session', async () => {
+    photo = await profile(parent, '林爸爸');
+    assert.equal(parent.session.mode, 'ACCOUNT');
+    const recovered = await good(
+      parent,
+      'GET',
+      '/operations/' +
+        photo.profileOperationKey +
+        '?method=PUT&path=' +
+        encodeURIComponent('/me/profile'),
+    );
+    assert.equal(recovered.state, 'SUCCEEDED');
+    assert.equal(recovered.result.session.mode, 'ACCOUNT');
+    assert.equal(photo.width, 512);
+    assert.equal(photo.height, 512);
+    const grant = await good(parent, 'POST', `/media/${photo.id}/read-grants`, {});
+    const response = await app.inject({ method: 'GET', url: new URL(grant.readUrl).pathname });
+    assert.equal(response.statusCode, 200);
+    const metadata = await sharp(response.rawPayload).metadata();
+    assert.equal(metadata.format, 'jpeg');
+    assert.equal(metadata.exif, undefined);
+  });
+  await t.test('family creates unique owner and two separate child accounts', async () => {
+    fid = await family(parent, '林家成长小队');
+    c1 = await child(parent, fid, '小禾');
+    c2 = await child(parent, fid, '小满');
+    assert.notEqual(c1.id, c2.id);
+    assert.equal(c1.account.availablePoints, 0);
+    assert.equal(c2.account.availablePoints, 0);
+    const f = await good(parent, 'GET', `/families/${fid}`);
+    assert.equal(f.membership.role, 'OWNER');
+    assert.equal(f.childrenSummary.length, 2);
+  });
+  await t.test(
+    'WeChat POST method override preserves PATCH authorization and idempotency',
+    async () => {
+      const key = randomUUID();
+      const body = { name: '林家成长小队新版', expectedVersion: 1 };
+      const r = await app.inject({
+        method: 'POST',
+        url: prefix + '/families/' + fid,
+        headers: {
+          authorization: 'Bearer ' + parent.token,
+          'content-type': 'application/json',
+          'idempotency-key': key,
+          'x-http-method-override': 'PATCH',
+        },
+        payload: body,
+      });
+      assert.equal(r.statusCode, 200, r.body);
+      assert.equal(r.json().data.version, 2);
+      const replay = await call(parent, 'PATCH', '/families/' + fid, body, key);
+      assert.equal(replay.response.headers['idempotency-replayed'], 'true');
+      const recovered = await good(
+        parent,
+        'GET',
+        '/operations/' + key + '?method=PATCH&path=' + encodeURIComponent('/families/' + fid),
+      );
+      assert.equal(recovered.state, 'SUCCEEDED');
+      const invalid = await app.inject({
+        method: 'POST',
+        url: prefix + '/families/' + fid,
+        headers: { authorization: 'Bearer ' + parent.token, 'x-http-method-override': 'DELETE' },
+      });
+      assert.equal(invalid.statusCode, 400);
+    },
+  );
+  await t.test('unrelated account cannot view family, child or private images', async () => {
+    other = await login('integration-outsider');
+    await profile(other, '另一位家长');
+    assert.equal((await call(other, 'GET', `/families/${fid}`)).status, 404);
+    assert.equal(
+      (await call(other, 'GET', `/families/${fid}/children/${c1.id}/account`)).status,
+      404,
+    );
+    assert.equal((await call(other, 'POST', `/media/${photo.id}/read-grants`, {})).status, 404);
+  });
+  await t.test(
+    'plan publication creates today snapshot and future preview stays read only',
+    async () => {
+      plan = await good(parent, 'POST', `/families/${fid}/plans`, {
+        type: 'ROUTINE',
+        title: '跳绳100次',
+        description: '按自己的节奏完成',
+        metric: 'COUNT',
+        targetValue: 100,
+        unit: 'REP',
+        awardPoints: 20,
+        childIds: [c1.id, c2.id],
+        weekdays: [1, 2, 3, 4, 5, 6, 7],
+      });
+      plan = await good(parent, 'POST', `/families/${fid}/plans/${plan.id}/publish`, {
+        startPolicy: 'TODAY',
+        expectedVersion: plan.version,
+      });
+      const today = await good(parent, 'GET', `/families/${fid}/children/${c1.id}/today`);
+      occ = today.routines[0];
+      assert.equal(occ.snapshot.awardPoints, 20);
+      assert.equal(occ.status, 'OPEN');
+    },
+  );
+  await t.test('draft may be below target but formal completion must reach target', async () => {
+    const draft = await good(parent, 'PUT', `/families/${fid}/occurrences/${occ.id}/draft`, {
+      actualValue: 50,
+      note: '先完成一半',
+      mediaIds: [],
+      expectedOccurrenceVersion: occ.version,
+      expectedDraftVersion: 0,
+    });
+    assert.equal(draft.occurrenceVersion, occ.version);
+    const invalid = await call(
+      parent,
+      'POST',
+      `/families/${fid}/occurrences/${occ.id}/submissions`,
+      { actualValue: 99, mediaIds: [], expectedVersion: occ.version },
+    );
+    assert.equal(invalid.error.code, 'TARGET_NOT_MET');
+  });
+  await t.test(
+    'delegation requires PIN enrollment and revokes the previous parent token',
+    async () => {
+      assert.equal(
+        (await call(parent, 'POST', '/auth/child-mode', { familyId: fid, childId: c1.id })).error
+          .code,
+        'PIN_REQUIRED',
+      );
+      const enrolled = await good(parent, 'POST', '/auth/pin/enroll', {
+        pin: '246810',
+        confirmationPin: '246810',
+      });
+      pinRecovery = enrolled.recoveryCode;
+      assert.ok(pinRecovery.replaceAll('-', '').length >= 32);
+      await good(parent, 'POST', '/auth/pin/enroll/confirm', {
+        enrollmentId: enrolled.enrollmentId,
+        recoverySaved: true,
+      });
+      const old = { ...parent };
+      tokens(
+        parent,
+        await good(parent, 'POST', '/auth/child-mode', { familyId: fid, childId: c1.id }),
+      );
+      assert.equal(parent.session.childSessionSource, 'DELEGATED');
+      assert.equal((await call(old, 'GET', `/families/${fid}`)).status, 401);
+      assert.equal((await call(parent, 'GET', '/me/profile')).status, 403);
+      assert.equal((await call(parent, 'GET', '/me/contexts')).status, 403);
+      assert.equal(
+        (await call(parent, 'GET', `/families/${fid}/children/${c2.id}/today`)).status,
+        404,
+      );
+    },
+  );
+  await t.test(
+    'child submits ready optional photo and receives no points before review',
+    async () => {
+      const m = await upload(parent, 'COMPLETION_EVIDENCE', {
+        familyId: fid,
+        childId: c1.id,
+        occurrenceId: occ.id,
+      });
+      const result = await good(
+        parent,
+        'POST',
+        `/families/${fid}/occurrences/${occ.id}/submissions`,
+        { actualValue: 100, note: '我完成啦', mediaIds: [m.id], expectedVersion: occ.version },
+      );
+      occ = result.occurrence || result;
+      assert.equal(occ.status, 'SUBMITTED');
+      assert.equal(
+        (await good(parent, 'GET', `/families/${fid}/children/${c1.id}/account`)).availablePoints,
+        0,
+      );
+      assert.equal(
+        (
+          await call(parent, 'POST', `/families/${fid}/occurrences/${occ.id}/review`, {
+            decision: 'APPROVE',
+            expectedVersion: occ.version,
+          })
+        ).status,
+        403,
+      );
+    },
+  );
+  await t.test('PIN exit restores parent and concurrent reviews award exactly once', async () => {
+    assert.equal(
+      (await call(parent, 'POST', '/auth/child-mode/exit', { pin: '000000' })).status,
+      403,
+    );
+    tokens(parent, await good(parent, 'POST', '/auth/child-mode/exit', { pin: '246810' }));
+    const [a, b] = await Promise.all([
+      call(parent, 'POST', `/families/${fid}/occurrences/${occ.id}/review`, {
+        decision: 'APPROVE',
+        expectedVersion: occ.version,
+      }),
+      call(parent, 'POST', `/families/${fid}/occurrences/${occ.id}/review`, {
+        decision: 'APPROVE',
+        expectedVersion: occ.version,
+      }),
+    ]);
+    assert.equal([a, b].filter((x) => x.status === 200).length, 1, JSON.stringify([a, b]));
+    assert.equal(
+      (await good(parent, 'GET', `/families/${fid}/children/${c1.id}/account`)).availablePoints,
+      20,
+    );
+  });
+  await t.test('same operation key replays once and different body is rejected', async () => {
+    const key = randomUUID();
+    const body = { points: 100, reason: '认真坚持' };
+    const first = await good(
+      parent,
+      'POST',
+      `/families/${fid}/children/${c1.id}/praises`,
+      body,
+      key,
+    );
+    const again = await call(
+      parent,
+      'POST',
+      `/families/${fid}/children/${c1.id}/praises`,
+      body,
+      key,
+    );
+    assert.equal(again.response.headers['idempotency-replayed'], 'true');
+    assert.equal(again.data.account.version, first.account.version);
+    assert.equal(
+      (
+        await call(
+          parent,
+          'POST',
+          `/families/${fid}/children/${c1.id}/praises`,
+          { points: 101, reason: '认真坚持' },
+          key,
+        )
+      ).error.code,
+      'IDEMPOTENCY_MISMATCH',
+    );
+  });
+  await t.test('rewards start as draft then become available with finite stock', async () => {
+    reward = await good(parent, 'POST', `/families/${fid}/rewards`, {
+      name: '游戏20分钟',
+      description: '周末一起约定',
+      category: 'TIME',
+      benefitDescription: '一次游戏20分钟',
+      timeMinutes: 20,
+      artKey: 'game',
+      costPoints: 30,
+      stockMode: 'FINITE',
+      initialStock: 2,
+      weeklyLimit: 2,
+      childIds: [c1.id, c2.id],
+    });
+    assert.equal(reward.status, 'DRAFT');
+    reward = await good(parent, 'POST', `/families/${fid}/rewards/${reward.id}/status`, {
+      status: 'ACTIVE',
+      expectedVersion: reward.version,
+    });
+    await good(parent, 'PUT', `/families/${fid}/children/${c1.id}/wish`, { rewardId: reward.id });
+  });
+  await t.test('request reserves points, stock and quota without capturing', async () => {
+    const d = await good(parent, 'POST', `/families/${fid}/children/${c1.id}/orders`, {
+      rewardId: reward.id,
+      expectedRewardVersion: reward.version,
+      expectedCostPoints: 30,
+    });
+    order = d.order;
+    assert.equal(order.status, 'PENDING_APPROVAL');
+    assert.equal(d.account.availablePoints, 90);
+    assert.equal(d.account.heldPoints, 30);
+    assert.equal(
+      (await good(parent, 'GET', `/families/${fid}/rewards/${reward.id}`)).stockAvailable,
+      1,
+    );
+  });
+  await t.test('approval captures held points and fulfillment never deducts twice', async () => {
+    const d = await good(parent, 'POST', `/families/${fid}/orders/${order.id}/approve`, {
+      arrangementNote: '周六午饭后',
+      expectedVersion: order.version,
+    });
+    order = d.order;
+    assert.equal(order.status, 'READY');
+    assert.equal(d.account.availablePoints, 90);
+    assert.equal(d.account.heldPoints, 0);
+    const accountVersion = d.account.version;
+    const done = await good(parent, 'POST', `/families/${fid}/orders/${order.id}/fulfill`, {
+      expectedVersion: order.version,
+      note: '已一起完成',
+    });
+    order = done.order || done;
+    assert.equal(order.status, 'FULFILLED');
+    assert.equal(
+      (await good(parent, 'GET', `/families/${fid}/children/${c1.id}/account`)).version,
+      accountVersion,
+    );
+    assert.equal(
+      (
+        await call(parent, 'POST', `/families/${fid}/orders/${order.id}/cancel`, {
+          expectedVersion: order.version,
+          reason: '不能撤销已兑现',
+        })
+      ).status,
+      409,
+    );
+  });
+  await t.test('pending cancellation releases original price and stock exactly once', async () => {
+    let d = await good(parent, 'POST', `/families/${fid}/children/${c1.id}/orders`, {
+      rewardId: reward.id,
+      expectedRewardVersion: reward.version,
+      expectedCostPoints: 30,
+    });
+    const pending = d.order;
+    d = await good(parent, 'POST', `/families/${fid}/orders/${pending.id}/cancel`, {
+      reason: '今天暂时不需要',
+      expectedVersion: pending.version,
+    });
+    assert.equal(d.account.availablePoints, 90);
+    assert.equal(d.account.heldPoints, 0);
+    assert.equal(
+      (await good(parent, 'GET', `/families/${fid}/rewards/${reward.id}`)).stockAvailable,
+      1,
+    );
+  });
+  await t.test(
+    'ready cancellation refunds original order price after reward repricing',
+    async () => {
+      let d = await good(parent, 'POST', `/families/${fid}/children/${c1.id}/orders`, {
+        rewardId: reward.id,
+        expectedRewardVersion: reward.version,
+        expectedCostPoints: 30,
+      });
+      d = await good(parent, 'POST', `/families/${fid}/orders/${d.order.id}/approve`, {
+        expectedVersion: d.order.version,
+      });
+      const ready = d.order;
+      reward = await good(parent, 'PATCH', `/families/${fid}/rewards/${reward.id}`, {
+        costPoints: 40,
+        expectedVersion: reward.version,
+      });
+      d = await good(parent, 'POST', `/families/${fid}/orders/${ready.id}/cancel`, {
+        reason: '本周改天安排',
+        expectedVersion: ready.version,
+      });
+      assert.equal(d.account.availablePoints, 90);
+      assert.equal(d.account.heldPoints, 0);
+    },
+  );
+  await t.test('stale price confirmation fails without holding points', async () => {
+    const r = await call(parent, 'POST', `/families/${fid}/children/${c1.id}/orders`, {
+      rewardId: reward.id,
+      expectedRewardVersion: reward.version - 1,
+      expectedCostPoints: 30,
+    });
+    assert.equal(r.error.code, 'REWARD_CHANGED');
+    assert.equal(
+      (await good(parent, 'GET', `/families/${fid}/children/${c1.id}/account`)).heldPoints,
+      0,
+    );
+  });
+  await t.test('child binding needs own complete profile and owner approval', async () => {
+    kid = await login('integration-direct-child');
+    await profile(kid, '小禾的微信');
+    const invite = await good(
+      parent,
+      'POST',
+      `/families/${fid}/children/${c1.id}/binding-invitations`,
+      {},
+    );
+    const preview = await good(kid, 'POST', '/child-bindings/preview', { token: invite.token });
+    assert.equal(preview.purpose, 'CHILD_BIND');
+    const application = await good(kid, 'POST', '/child-binding-applications', {
+      token: invite.token,
+    });
+    assert.equal((await good(kid, 'GET', '/me/contexts')).items.length, 0);
+    await good(
+      parent,
+      'POST',
+      `/families/${fid}/child-binding-applications/${application.id}/decision`,
+      { decision: 'APPROVE', syncProfile: false, expectedVersion: application.version },
+    );
+    await context(kid, fid);
+    assert.equal(kid.session.childSessionSource, 'DIRECT');
+    assert.equal((await call(kid, 'POST', '/auth/child-mode/exit', { pin: '246810' })).status, 403);
+    assert.equal(
+      (await good(kid, 'GET', `/families/${fid}/children/${c1.id}/account`)).availablePoints,
+      90,
+    );
+  });
+  await t.test('DIRECT child cannot create plans, praise or inspect sibling', async () => {
+    assert.equal(
+      (
+        await call(kid, 'POST', `/families/${fid}/children/${c1.id}/praises`, {
+          points: 100,
+          reason: '自己加分',
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await call(kid, 'GET', `/families/${fid}/children/${c2.id}/account`)).status,
+      404,
+    );
+    assert.equal((await call(kid, 'GET', `/families/${fid}/guardians`)).status, 403);
+    assert.equal((await good(kid, 'GET', '/me/profile')).displayName, '小禾的微信');
+  });
+  await t.test(
+    'unlink revokes direct session and private read grants but preserves account',
+    async () => {
+      const me = await good(kid, 'GET', '/me/profile');
+      const grant = await good(kid, 'POST', `/media/${me.avatarMediaId}/read-grants`, {});
+      c1 = await good(parent, 'GET', `/families/${fid}/children/${c1.id}`);
+      const step = await good(parent, 'POST', '/auth/step-up', {
+        pin: '246810',
+        action: 'UNBIND_CHILD',
+      });
+      await good(parent, 'POST', `/families/${fid}/children/${c1.id}/unbind`, {
+        reason: '换一个微信账号',
+        expectedBindingVersion: c1.bindingVersion,
+        stepUpToken: step.stepUpToken,
+      });
+      assert.equal((await call(kid, 'GET', '/auth/session')).status, 401);
+      const r = await app.inject({ method: 'GET', url: new URL(grant.readUrl).pathname });
+      assert.equal(r.statusCode, 401);
+      assert.equal(
+        (await good(parent, 'GET', `/families/${fid}/children/${c1.id}/account`)).availablePoints,
+        90,
+      );
+    },
+  );
+  await t.test('fresh WeChat login cannot bypass a parent PIN', async () => {
+    const fresh = await login('integration-parent');
+    assert.equal(fresh.session.mode, 'LOCKED');
+    assert.equal((await call(fresh, 'GET', '/me/contexts')).error.code, 'PIN_REQUIRED');
+    for (let i = 0; i < 5; i++) {
+      assert.equal((await call(fresh, 'POST', '/auth/pin/unlock', { pin: '000000' })).status, 403);
+    }
+    const locked = await call(fresh, 'POST', '/auth/pin/unlock', { pin: '246810' });
+    assert.equal(locked.status, 429);
+  });
+  await t.test('account and immutable ledger reconcile after all operations', async () => {
+    const result = await services.pool.query(
+      `SELECT a.child_id FROM point_accounts a LEFT JOIN (SELECT family_id,child_id,COALESCE(sum(available_delta),0) av,COALESCE(sum(held_delta),0) held,count(*) n FROM point_ledger GROUP BY family_id,child_id) l USING(family_id,child_id) WHERE a.available_points<>COALESCE(l.av,0) OR a.held_points<>COALESCE(l.held,0) OR a.version<>COALESCE(l.n,0)`,
+    );
+    assert.equal(result.rowCount, 0);
+    const count = await services.pool.query(
+      "SELECT count(*) n FROM point_ledger WHERE type='ACTIVITY_AWARD'",
+    );
+    assert.equal(Number(count.rows[0].n), 1);
+  });
 });

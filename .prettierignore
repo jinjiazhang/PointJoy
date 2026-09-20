@@ -1,0 +1,15 @@
+node_modules/
+**/dist/
+work/
+.var/
+coverage/
+package-lock.json
+packages/contracts/openapi.json
+apps/api/migrations/
+*.md
+*.yml
+*.yaml
+*.key
+*.secret
+.env
+.env.*

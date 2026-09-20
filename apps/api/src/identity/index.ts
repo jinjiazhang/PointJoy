@@ -1,8 +1,17 @@
-import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual, scrypt as scryptCallback, createCipheriv, createDecipheriv } from 'node:crypto';
+import {
+  randomBytes,
+  randomUUID,
+  createHash,
+  createHmac,
+  timingSafeEqual,
+  scrypt as scryptCallback,
+  createCipheriv,
+  createDecipheriv,
+} from 'node:crypto';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { AppError, rows, one, maybe, ok, audit, queueProtection } from '../common/index.js';
+import { AppError, rows, one, maybe, ok, queueProtection } from '../common/index.js';
 import type { Actor, Db, Services } from '../common/index.js';
 
 const scrypt = promisify(scryptCallback);
@@ -10,104 +19,1140 @@ const uuid = z.string().uuid();
 const pin = z.string().regex(/^\d{6}$/);
 export const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export const secret = () => randomBytes(32).toString('base64url');
-export const fail = (status: number, code: string, message: string, details?: unknown): never => { throw new AppError(status, code, message, details); };
+export const fail = (status: number, code: string, message: string, details?: unknown): never => {
+  throw new AppError(status, code, message, details);
+};
 export const config = (s: Services) => s.config as any;
-export async function connection<T>(s: Services, fn: (db: Db) => Promise<T>): Promise<T> { const db = await s.pool.connect(); try { return await fn(db); } finally { db.release(); } }
-export async function transaction<T>(s: Services, fn: (db: Db) => Promise<T>): Promise<T> { return connection(s, async db => { await db.query('BEGIN'); try { const value = await fn(db); await db.query('COMMIT'); return value; } catch (e) { await db.query('ROLLBACK'); throw e; } }); }
-export const validName = z.string().trim().refine(v => [...v].length >= 1 && [...v].length <= 24, '昵称需为 1—24 个字符');
-export const validReason = z.string().trim().refine(v => [...v].length >= 1 && [...v].length <= 200, '请填写 1—200 字原因');
-export const versionOf = (row: any, version: number) => { if (Number(row.version) !== version) fail(409, 'VERSION_CONFLICT', '内容已更新，请刷新后再操作'); };
-export function publicProfile(user: any) { return { id: user.id, displayName: user.displayName, avatarMediaId: user.avatarMediaId, profileCompletedAt: user.profileCompletedAt, version: Number(user.version) }; }
+export async function connection<T>(s: Services, fn: (db: Db) => Promise<T>): Promise<T> {
+  const db = await s.pool.connect();
+  try {
+    return await fn(db);
+  } finally {
+    db.release();
+  }
+}
+export async function transaction<T>(s: Services, fn: (db: Db) => Promise<T>): Promise<T> {
+  return connection(s, async (db) => {
+    await db.query('BEGIN');
+    try {
+      const value = await fn(db);
+      await db.query('COMMIT');
+      return value;
+    } catch (e) {
+      await db.query('ROLLBACK');
+      throw e;
+    }
+  });
+}
+export const validName = z
+  .string()
+  .trim()
+  .refine((v) => [...v].length >= 1 && [...v].length <= 24, '昵称需为 1—24 个字符');
+export const validReason = z
+  .string()
+  .trim()
+  .refine((v) => [...v].length >= 1 && [...v].length <= 200, '请填写 1—200 字原因');
+export const versionOf = (row: any, version: number) => {
+  if (Number(row.version) !== version) {
+    fail(409, 'VERSION_CONFLICT', '内容已更新，请刷新后再操作');
+  }
+};
+export function publicProfile(user: any) {
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    avatarMediaId: user.avatarMediaId,
+    profileCompletedAt: user.profileCompletedAt,
+    version: Number(user.version),
+  };
+}
 
-async function passwordHash(value: string) { const salt = randomBytes(16).toString('hex'); const out = await (scrypt as any)(value, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }); return `scrypt$${salt}$${out.toString('hex')}`; }
-async function passwordMatches(value: string, encoded?: string | null) { if (!encoded) return false; const [, salt, target] = encoded.split('$'); if (!salt || !target) return false; const out = await (scrypt as any)(value, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }); const expected = Buffer.from(target, 'hex'); return expected.length === out.length && timingSafeEqual(expected, out); }
-function normalizedRecovery(value: string) { return value.replace(/[\s-]/g, '').toUpperCase(); }
-function recoveryCode() { return randomBytes(20).toString('hex').toUpperCase().match(/.{1,5}/g)!.join('-'); }
-function encrypt(s: Services, value: unknown) { const iv = randomBytes(12); const key = createHash('sha256').update(config(s).responseEncryptionKey).digest(); const cipher = createCipheriv('aes-256-gcm', key, iv); const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]); return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64'); }
-function decrypt(s: Services, value: string) { const data = Buffer.from(value, 'base64'); const key = createHash('sha256').update(config(s).responseEncryptionKey).digest(); const cipher = createDecipheriv('aes-256-gcm', key, data.subarray(0, 12)); cipher.setAuthTag(data.subarray(12, 28)); return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)), cipher.final()]).toString()); }
+async function passwordHash(value: string) {
+  const salt = randomBytes(16).toString('hex');
+  const out = await (scrypt as any)(value, salt, 64, {
+    N: 32768,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024,
+  });
+  return `scrypt$${salt}$${out.toString('hex')}`;
+}
+async function passwordMatches(value: string, encoded?: string | null) {
+  if (!encoded) {
+    return false;
+  }
+  const [, salt, target] = encoded.split('$');
+  if (!salt || !target) {
+    return false;
+  }
+  const out = await (scrypt as any)(value, salt, 64, {
+    N: 32768,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024,
+  });
+  const expected = Buffer.from(target, 'hex');
+  return expected.length === out.length && timingSafeEqual(expected, out);
+}
+function normalizedRecovery(value: string) {
+  return value.replace(/[\s-]/g, '').toUpperCase();
+}
+function recoveryCode() {
+  return randomBytes(20)
+    .toString('hex')
+    .toUpperCase()
+    .match(/.{1,5}/g)!
+    .join('-');
+}
+function encrypt(s: Services, value: unknown) {
+  const iv = randomBytes(12);
+  const key = createHash('sha256').update(config(s).responseEncryptionKey).digest();
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64');
+}
+function decrypt(s: Services, value: string) {
+  const data = Buffer.from(value, 'base64');
+  const key = createHash('sha256').update(config(s).responseEncryptionKey).digest();
+  const cipher = createDecipheriv('aes-256-gcm', key, data.subarray(0, 12));
+  cipher.setAuthTag(data.subarray(12, 28));
+  return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)), cipher.final()]).toString());
+}
 
-export type Requirements = { familyId?: string; childId?: string; guardian?: boolean; owner?: boolean; profile?: boolean; write?: boolean; allowLocked?: boolean; allowArchived?: boolean; allowArchivedWrite?: boolean; allowExpired?: boolean; account?: boolean };
+export type Requirements = {
+  familyId?: string;
+  childId?: string;
+  guardian?: boolean;
+  owner?: boolean;
+  profile?: boolean;
+  write?: boolean;
+  allowLocked?: boolean;
+  allowArchived?: boolean;
+  allowArchivedWrite?: boolean;
+  allowExpired?: boolean;
+  account?: boolean;
+};
 
 export class AuthService {
- constructor(private s: Services) {}
- scope(actor: Actor, profile = false) { const a = actor as any; return createHmac('sha256', config(this.s).sessionSigningKey).update(profile ? `${a.userId}:PROFILE_SELF` : [a.userId, a.mode, a.childSessionSource ?? '', a.familyId ?? '', a.childId ?? ''].join(':')).digest('hex'); }
- sessionView(session: any, user?: any) { const actor = this.actor(session); return { sessionId: session.id, mode: session.mode, childSessionSource: session.childSessionSource ?? undefined, familyId: session.familyId ?? undefined, childId: session.childId ?? undefined, expiresAt: session.expiresAt, actorScopeKey: this.scope(actor), accountScopeKey: this.scope(actor, true), capabilities: session.mode === 'GUARDIAN' ? ['GUARDIAN'] : session.mode === 'CHILD' ? ['CHILD', session.childSessionSource] : [session.mode], profileRequired: user ? !user.profileCompletedAt : session.mode === 'PROFILE_ONLY', pinRequired: session.mode === 'LOCKED', pinEnabled:!!session.pinEnabled }; }
- actor(session: any): Actor { return { userId: session.userId, sessionId: session.id, mode: session.mode, childSessionSource: session.childSessionSource ?? undefined, familyId: session.familyId ?? undefined, childId: session.childId ?? undefined, membershipId: session.sourceMembershipId ?? undefined, securityVersion: Number(session.securityVersion), bindingVersion: session.bindingVersion == null ? undefined : Number(session.bindingVersion), pinVerifiedAt: session.pinVerifiedAt } as Actor; }
- async require(request: FastifyRequest, requirements: Requirements = {}): Promise<Actor> { const raw = request.headers.authorization; if (!raw?.startsWith('Bearer ')) fail(401, 'SESSION_EXPIRED', '请先微信登录'); const token = raw!.slice(7); return connection(this.s, async db => { const session = await maybe(db, 'SELECT * FROM auth_sessions WHERE access_hash=$1', [digest(token)]); if (!session) fail(401, 'SESSION_EXPIRED', '登录已失效，请重新登录'); const actor = this.actor(session); return await this.recheck(db, actor, requirements); }); }
- async recheck(db: Db, actor: Actor, requirement: Requirements = {}): Promise<Actor> {
-  const a = actor as any; const session = await maybe(db, 'SELECT * FROM auth_sessions WHERE id=$1 AND user_id=$2 FOR SHARE', [a.sessionId, a.userId]);
-  const user = await maybe(db, 'SELECT * FROM users WHERE id=$1', [a.userId]);
-  if (!session || !user || user.status !== 'ACTIVE' || session.revokedAt || !requirement.allowExpired && new Date(session.expiresAt).getTime() <= Date.now() || Number(session.securityVersion) !== Number(user.securityVersion)) fail(401, 'SESSION_REVOKED', '登录已失效，请重新验证');
-  Object.assign(a, this.actor(session));
-  if (session.mode === 'LOCKED' && !requirement.allowLocked) fail(403, 'PIN_REQUIRED', '请先验证家长密码');
-  if (requirement.profile !== false && !user.profileCompletedAt) fail(403, 'PROFILE_REQUIRED', '请先上传头像并填写昵称');
-  if (requirement.account && (session.mode === 'CHILD' && session.childSessionSource === 'DELEGATED')) fail(403, 'FORBIDDEN', '共用孩子模式不能访问家长账号资料');
-  if (session.mode === 'CHILD') {
-   const child = await maybe(db, 'SELECT * FROM child_profiles WHERE id=$1 AND family_id=$2', [session.childId, session.familyId]);
-   const family = await maybe(db, 'SELECT * FROM families WHERE id=$1', [session.familyId]);
-   if (!child || child.status !== 'ACTIVE' || !family || family.status !== 'ACTIVE') fail(401, 'SESSION_REVOKED', '这个孩子会话已失效');
-   if (session.childSessionSource === 'DIRECT') { if (child.boundUserId !== session.userId || Number(child.bindingVersion) !== Number(session.bindingVersion)) fail(401, 'SESSION_REVOKED', '微信绑定已解除'); }
-   else { const parent = await maybe(db, 'SELECT id FROM guardian_memberships WHERE id=$1 AND family_id=$2 AND user_id=$3 AND status=\'ACTIVE\'', [session.sourceMembershipId, session.familyId, session.userId]); if (!parent) fail(401, 'SESSION_REVOKED', '家长家庭权限已失效'); }
+  constructor(private s: Services) {}
+  scope(actor: Actor, profile = false) {
+    const a = actor as any;
+    return createHmac('sha256', config(this.s).sessionSigningKey)
+      .update(
+        profile
+          ? `${a.userId}:PROFILE_SELF`
+          : [a.userId, a.mode, a.childSessionSource ?? '', a.familyId ?? '', a.childId ?? ''].join(
+              ':',
+            ),
+      )
+      .digest('hex');
   }
-  const fid = requirement.familyId ?? session.familyId;
-  if (requirement.familyId && session.familyId !== requirement.familyId) fail(404, 'RESOURCE_NOT_FOUND', '当前身份无法访问此内容');
-  if (fid && ['GUARDIAN','CHILD'].includes(session.mode)) {
-   const family = await maybe(db, 'SELECT * FROM families WHERE id=$1', [fid]);
-   if (!family) fail(404, 'RESOURCE_NOT_FOUND', '当前身份无法访问此内容');if(family.status==='DELETING')fail(423,'FAMILY_FROZEN','家庭资料正在删除或受恢复保护，请查看独立处理回执或联系支持');
-   if (family.status !== 'ACTIVE' && (requirement.write && !(requirement.account&&!requirement.familyId) && !requirement.allowArchivedWrite || !requirement.allowArchived && session.mode === 'CHILD')) fail(409, 'INVALID_STATE', '家庭已归档，仅可查看历史');
-   if (session.mode === 'GUARDIAN') { const membership = await maybe(db, 'SELECT * FROM guardian_memberships WHERE family_id=$1 AND user_id=$2 AND status=\'ACTIVE\'', [fid, session.userId]); if (!membership) fail(403, 'FORBIDDEN', '当前家庭权限已失效'); a.membershipId = membership.id; a.role = family.ownerMembershipId === membership.id ? 'OWNER' : 'GUARDIAN'; }
+  sessionView(session: any, user?: any) {
+    const actor = this.actor(session);
+    return {
+      sessionId: session.id,
+      mode: session.mode,
+      childSessionSource: session.childSessionSource ?? undefined,
+      familyId: session.familyId ?? undefined,
+      childId: session.childId ?? undefined,
+      expiresAt: session.expiresAt,
+      actorScopeKey: this.scope(actor),
+      accountScopeKey: this.scope(actor, true),
+      capabilities:
+        session.mode === 'GUARDIAN'
+          ? ['GUARDIAN']
+          : session.mode === 'CHILD'
+            ? ['CHILD', session.childSessionSource]
+            : [session.mode],
+      profileRequired: user ? !user.profileCompletedAt : session.mode === 'PROFILE_ONLY',
+      pinRequired: session.mode === 'LOCKED',
+      pinEnabled: !!session.pinEnabled,
+    };
   }
-  if (requirement.guardian || requirement.owner) { if (session.mode !== 'GUARDIAN' || !a.membershipId) fail(403, 'FORBIDDEN', '需要家长身份'); if (requirement.owner && a.role !== 'OWNER') fail(403, 'FORBIDDEN', '仅家庭负责人可以操作'); }
-  if (requirement.childId) { if (!fid) fail(404, 'RESOURCE_NOT_FOUND', '孩子不存在'); const child = await maybe(db, 'SELECT id,status FROM child_profiles WHERE id=$1 AND family_id=$2', [requirement.childId, fid]); if (!child || session.mode === 'CHILD' && session.childId !== requirement.childId || !['GUARDIAN','CHILD'].includes(session.mode)) fail(404, 'RESOURCE_NOT_FOUND', '当前身份无法访问此内容'); if (requirement.write && child.status !== 'ACTIVE') fail(409, 'INVALID_STATE', '孩子档案已归档'); }
-  return a;
- }
- async issue(db: Db, user: any, mode: string, context: any = {}) { const id = randomUUID(); const accessToken = `${id}.${secret()}`; const refreshToken = `${id}.${secret()}`; const ttl = config(this.s).accessTokenTtlSeconds ?? 900; const session = await one(db, `INSERT INTO auth_sessions(id,user_id,mode,child_session_source,family_id,child_id,source_membership_id,binding_version,security_version,access_hash,refresh_hash,expires_at,refresh_expires_at,pin_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()+$12*interval '1 second',now()+$13*interval '1 day',$14) RETURNING *`, [id,user.id,mode,context.childSessionSource??null,context.familyId??null,context.childId??null,context.membershipId??null,context.bindingVersion??null,user.securityVersion,digest(accessToken),digest(refreshToken),ttl,config(this.s).refreshTokenTtlDays??30,context.pinVerifiedAt??null]); session.pinEnabled=!!await maybe(db,'SELECT 1 FROM pin_credentials WHERE user_id=$1 AND enabled_at IS NOT NULL',[user.id]);return { accessToken, refreshToken, expiresIn: ttl, session: this.sessionView(session,user) }; }
- async revoke(db: Db, sessionId: string) { await db.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,now()),updated_at=now() WHERE id=$1', [sessionId]); }
- async verifyPin(db: Db, userId: string, value: string): Promise<boolean> { const credential = await maybe(db, 'SELECT * FROM pin_credentials WHERE user_id=$1 FOR UPDATE', [userId]); if(credential?.recoveryBlocked)fail(403,'PIN_RECOVERY_REQUIRED','账号恢复保护已启用，请通过支持申请完成独立核验');if (!credential?.enabledAt) fail(403,'PIN_REQUIRED','请先设置家长密码'); if (credential.lockedUntil && new Date(credential.lockedUntil).getTime()>Date.now()) fail(429,'PIN_LOCKED','家长密码暂时锁定，请稍后再试',{retryAfterSeconds:Math.ceil((new Date(credential.lockedUntil).getTime()-Date.now())/1000)}); const good = await passwordMatches(value,credential.pinHash); if (!good) { const next = credential.lockedUntil ? 1 : Number(credential.failureCount)+1; await db.query(`UPDATE pin_credentials SET failure_count=$2,locked_until=CASE WHEN $2>=5 THEN now()+interval '15 minutes' ELSE NULL END,updated_at=now() WHERE user_id=$1`,[userId,next]); return false; } await db.query('UPDATE pin_credentials SET failure_count=0,locked_until=NULL,updated_at=now() WHERE user_id=$1',[userId]); return true; }
- async consumeStepUp(db: Db, actor: Actor, token: string | undefined, action: string) { if (!token) fail(403,'PIN_REQUIRED','请先完成敏感操作验证'); const grant = await maybe(db,'SELECT * FROM step_up_grants WHERE token_hash=$1 FOR UPDATE',[digest(token!)]); if (!grant || grant.sessionId!==actor.sessionId || grant.action!==action || grant.usedAt || new Date(grant.expiresAt).getTime()<=Date.now()) fail(403,'FORBIDDEN','操作验证已失效，请重新验证'); await db.query('UPDATE step_up_grants SET used_at=now() WHERE token_hash=$1',[digest(token!)]); }
- async wechat(code: string) { const c=config(this.s); if(['local','test'].includes(c.appEnv)&&/^local:[a-zA-Z0-9_-]{1,100}$/.test(code))return{appId:c.wechatAppId||'pointjoy-local',subject:code.slice(6)}; if (!c.wechatAppId||!c.wechatAppSecret) fail(503,'WECHAT_NOT_CONFIGURED','微信登录尚未配置'); const url=new URL('https://api.weixin.qq.com/sns/jscode2session'); url.searchParams.set('appid',c.wechatAppId); url.searchParams.set('secret',c.wechatAppSecret); url.searchParams.set('js_code',code); url.searchParams.set('grant_type','authorization_code'); let result:any; try { const response=await fetch(url,{signal:AbortSignal.timeout(10000)}); result=await response.json(); } catch { fail(503,'WECHAT_UNAVAILABLE','微信登录暂不可用，请稍后重试'); } if (!result?.openid || result.errcode) fail(401,'WECHAT_LOGIN_FAILED','微信登录凭据无效，请重新登录'); return {appId:c.wechatAppId,subject:String(result.openid)}; }
- async attempt(db: Db,kind: string,id: string,credential: string) { const value=await maybe(db,'SELECT * FROM auth_attempts WHERE kind=$1 AND attempt_id=$2 AND credential_hash=$3 AND expires_at>now()',[kind,id,digest(credential)]); if(!value)return null;const response=decrypt(this.s,value.responseCiphertext);if(response?.session?.sessionId){const session=await maybe(db,'SELECT s.*,EXISTS(SELECT 1 FROM pin_credentials p WHERE p.user_id=s.user_id AND p.enabled_at IS NOT NULL) AS pin_enabled FROM auth_sessions s WHERE s.id=$1',[response.session.sessionId]);if(!session)return null;try{await this.recheck(db,this.actor(session),{profile:false,allowLocked:true});}catch{return null;}}return response; }
- async saveAttempt(db: Db,kind:string,id:string,credential:string,response:unknown) { await db.query(`INSERT INTO auth_attempts(kind,attempt_id,credential_hash,response_ciphertext,expires_at) VALUES($1,$2,$3,$4,now()+interval '2 minutes') ON CONFLICT(kind,attempt_id,credential_hash) DO NOTHING`,[kind,id,digest(credential),encrypt(this.s,response)]); }
+  actor(session: any): Actor {
+    return {
+      userId: session.userId,
+      sessionId: session.id,
+      mode: session.mode,
+      childSessionSource: session.childSessionSource ?? undefined,
+      familyId: session.familyId ?? undefined,
+      childId: session.childId ?? undefined,
+      membershipId: session.sourceMembershipId ?? undefined,
+      securityVersion: Number(session.securityVersion),
+      bindingVersion: session.bindingVersion == null ? undefined : Number(session.bindingVersion),
+      pinVerifiedAt: session.pinVerifiedAt,
+    } as Actor;
+  }
+  async require(request: FastifyRequest, requirements: Requirements = {}): Promise<Actor> {
+    const raw = request.headers.authorization;
+    if (!raw?.startsWith('Bearer ')) {
+      fail(401, 'SESSION_EXPIRED', '请先微信登录');
+    }
+    const token = raw!.slice(7);
+    return connection(this.s, async (db) => {
+      const session = await maybe(db, 'SELECT * FROM auth_sessions WHERE access_hash=$1', [
+        digest(token),
+      ]);
+      if (!session) {
+        fail(401, 'SESSION_EXPIRED', '登录已失效，请重新登录');
+      }
+      const actor = this.actor(session);
+      return await this.recheck(db, actor, requirements);
+    });
+  }
+  async recheck(db: Db, actor: Actor, requirement: Requirements = {}): Promise<Actor> {
+    const a = actor as any;
+    const session = await maybe(
+      db,
+      'SELECT * FROM auth_sessions WHERE id=$1 AND user_id=$2 FOR SHARE',
+      [a.sessionId, a.userId],
+    );
+    const user = await maybe(db, 'SELECT * FROM users WHERE id=$1', [a.userId]);
+    if (
+      !session ||
+      !user ||
+      user.status !== 'ACTIVE' ||
+      session.revokedAt ||
+      (!requirement.allowExpired && new Date(session.expiresAt).getTime() <= Date.now()) ||
+      Number(session.securityVersion) !== Number(user.securityVersion)
+    ) {
+      fail(401, 'SESSION_REVOKED', '登录已失效，请重新验证');
+    }
+    Object.assign(a, this.actor(session));
+    if (session.mode === 'LOCKED' && !requirement.allowLocked) {
+      fail(403, 'PIN_REQUIRED', '请先验证家长密码');
+    }
+    if (requirement.profile !== false && !user.profileCompletedAt) {
+      fail(403, 'PROFILE_REQUIRED', '请先上传头像并填写昵称');
+    }
+    if (
+      requirement.account &&
+      session.mode === 'CHILD' &&
+      session.childSessionSource === 'DELEGATED'
+    ) {
+      fail(403, 'FORBIDDEN', '共用孩子模式不能访问家长账号资料');
+    }
+    if (session.mode === 'CHILD') {
+      const child = await maybe(db, 'SELECT * FROM child_profiles WHERE id=$1 AND family_id=$2', [
+        session.childId,
+        session.familyId,
+      ]);
+      const family = await maybe(db, 'SELECT * FROM families WHERE id=$1', [session.familyId]);
+      if (!child || child.status !== 'ACTIVE' || !family || family.status !== 'ACTIVE') {
+        fail(401, 'SESSION_REVOKED', '这个孩子会话已失效');
+      }
+      if (session.childSessionSource === 'DIRECT') {
+        if (
+          child.boundUserId !== session.userId ||
+          Number(child.bindingVersion) !== Number(session.bindingVersion)
+        ) {
+          fail(401, 'SESSION_REVOKED', '微信绑定已解除');
+        }
+      } else {
+        const parent = await maybe(
+          db,
+          "SELECT id FROM guardian_memberships WHERE id=$1 AND family_id=$2 AND user_id=$3 AND status='ACTIVE'",
+          [session.sourceMembershipId, session.familyId, session.userId],
+        );
+        if (!parent) {
+          fail(401, 'SESSION_REVOKED', '家长家庭权限已失效');
+        }
+      }
+    }
+    const fid = requirement.familyId ?? session.familyId;
+    if (requirement.familyId && session.familyId !== requirement.familyId) {
+      fail(404, 'RESOURCE_NOT_FOUND', '当前身份无法访问此内容');
+    }
+    if (fid && ['GUARDIAN', 'CHILD'].includes(session.mode)) {
+      const family = await maybe(db, 'SELECT * FROM families WHERE id=$1', [fid]);
+      if (!family) {
+        fail(404, 'RESOURCE_NOT_FOUND', '当前身份无法访问此内容');
+      }
+      if (family.status === 'DELETING') {
+        fail(423, 'FAMILY_FROZEN', '家庭资料正在删除或受恢复保护，请查看独立处理回执或联系支持');
+      }
+      if (
+        family.status !== 'ACTIVE' &&
+        ((requirement.write &&
+          !(requirement.account && !requirement.familyId) &&
+          !requirement.allowArchivedWrite) ||
+          (!requirement.allowArchived && session.mode === 'CHILD'))
+      ) {
+        fail(409, 'INVALID_STATE', '家庭已归档，仅可查看历史');
+      }
+      if (session.mode === 'GUARDIAN') {
+        const membership = await maybe(
+          db,
+          "SELECT * FROM guardian_memberships WHERE family_id=$1 AND user_id=$2 AND status='ACTIVE'",
+          [fid, session.userId],
+        );
+        if (!membership) {
+          fail(403, 'FORBIDDEN', '当前家庭权限已失效');
+        }
+        a.membershipId = membership.id;
+        a.role = family.ownerMembershipId === membership.id ? 'OWNER' : 'GUARDIAN';
+      }
+    }
+    if (requirement.guardian || requirement.owner) {
+      if (session.mode !== 'GUARDIAN' || !a.membershipId) {
+        fail(403, 'FORBIDDEN', '需要家长身份');
+      }
+      if (requirement.owner && a.role !== 'OWNER') {
+        fail(403, 'FORBIDDEN', '仅家庭负责人可以操作');
+      }
+    }
+    if (requirement.childId) {
+      if (!fid) {
+        fail(404, 'RESOURCE_NOT_FOUND', '孩子不存在');
+      }
+      const child = await maybe(
+        db,
+        'SELECT id,status FROM child_profiles WHERE id=$1 AND family_id=$2',
+        [requirement.childId, fid],
+      );
+      if (
+        !child ||
+        (session.mode === 'CHILD' && session.childId !== requirement.childId) ||
+        !['GUARDIAN', 'CHILD'].includes(session.mode)
+      ) {
+        fail(404, 'RESOURCE_NOT_FOUND', '当前身份无法访问此内容');
+      }
+      if (requirement.write && child.status !== 'ACTIVE') {
+        fail(409, 'INVALID_STATE', '孩子档案已归档');
+      }
+    }
+    return a;
+  }
+  async issue(db: Db, user: any, mode: string, context: any = {}) {
+    const id = randomUUID();
+    const accessToken = `${id}.${secret()}`;
+    const refreshToken = `${id}.${secret()}`;
+    const ttl = config(this.s).accessTokenTtlSeconds ?? 900;
+    const session = await one(
+      db,
+      `INSERT INTO auth_sessions(id,user_id,mode,child_session_source,family_id,child_id,source_membership_id,binding_version,security_version,access_hash,refresh_hash,expires_at,refresh_expires_at,pin_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()+$12*interval '1 second',now()+$13*interval '1 day',$14) RETURNING *`,
+      [
+        id,
+        user.id,
+        mode,
+        context.childSessionSource ?? null,
+        context.familyId ?? null,
+        context.childId ?? null,
+        context.membershipId ?? null,
+        context.bindingVersion ?? null,
+        user.securityVersion,
+        digest(accessToken),
+        digest(refreshToken),
+        ttl,
+        config(this.s).refreshTokenTtlDays ?? 30,
+        context.pinVerifiedAt ?? null,
+      ],
+    );
+    session.pinEnabled = !!(await maybe(
+      db,
+      'SELECT 1 FROM pin_credentials WHERE user_id=$1 AND enabled_at IS NOT NULL',
+      [user.id],
+    ));
+    return { accessToken, refreshToken, expiresIn: ttl, session: this.sessionView(session, user) };
+  }
+  async revoke(db: Db, sessionId: string) {
+    await db.query(
+      'UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,now()),updated_at=now() WHERE id=$1',
+      [sessionId],
+    );
+  }
+  async verifyPin(db: Db, userId: string, value: string): Promise<boolean> {
+    const credential = await maybe(
+      db,
+      'SELECT * FROM pin_credentials WHERE user_id=$1 FOR UPDATE',
+      [userId],
+    );
+    if (credential?.recoveryBlocked) {
+      fail(403, 'PIN_RECOVERY_REQUIRED', '账号恢复保护已启用，请通过支持申请完成独立核验');
+    }
+    if (!credential?.enabledAt) {
+      fail(403, 'PIN_REQUIRED', '请先设置家长密码');
+    }
+    if (credential.lockedUntil && new Date(credential.lockedUntil).getTime() > Date.now()) {
+      fail(429, 'PIN_LOCKED', '家长密码暂时锁定，请稍后再试', {
+        retryAfterSeconds: Math.ceil(
+          (new Date(credential.lockedUntil).getTime() - Date.now()) / 1000,
+        ),
+      });
+    }
+    const good = await passwordMatches(value, credential.pinHash);
+    if (!good) {
+      const next = credential.lockedUntil ? 1 : Number(credential.failureCount) + 1;
+      await db.query(
+        `UPDATE pin_credentials SET failure_count=$2,locked_until=CASE WHEN $2>=5 THEN now()+interval '15 minutes' ELSE NULL END,updated_at=now() WHERE user_id=$1`,
+        [userId, next],
+      );
+      return false;
+    }
+    await db.query(
+      'UPDATE pin_credentials SET failure_count=0,locked_until=NULL,updated_at=now() WHERE user_id=$1',
+      [userId],
+    );
+    return true;
+  }
+  async consumeStepUp(db: Db, actor: Actor, token: string | undefined, action: string) {
+    if (!token) {
+      fail(403, 'PIN_REQUIRED', '请先完成敏感操作验证');
+    }
+    const grant = await maybe(db, 'SELECT * FROM step_up_grants WHERE token_hash=$1 FOR UPDATE', [
+      digest(token!),
+    ]);
+    if (
+      !grant ||
+      grant.sessionId !== actor.sessionId ||
+      grant.action !== action ||
+      grant.usedAt ||
+      new Date(grant.expiresAt).getTime() <= Date.now()
+    ) {
+      fail(403, 'FORBIDDEN', '操作验证已失效，请重新验证');
+    }
+    await db.query('UPDATE step_up_grants SET used_at=now() WHERE token_hash=$1', [digest(token!)]);
+  }
+  async wechat(code: string) {
+    const c = config(this.s);
+    if (['local', 'test'].includes(c.appEnv) && /^local:[a-zA-Z0-9_-]{1,100}$/.test(code)) {
+      return { appId: c.wechatAppId || 'pointjoy-local', subject: code.slice(6) };
+    }
+    if (!c.wechatAppId || !c.wechatAppSecret) {
+      fail(503, 'WECHAT_NOT_CONFIGURED', '微信登录尚未配置');
+    }
+    const url = new URL('https://api.weixin.qq.com/sns/jscode2session');
+    url.searchParams.set('appid', c.wechatAppId);
+    url.searchParams.set('secret', c.wechatAppSecret);
+    url.searchParams.set('js_code', code);
+    url.searchParams.set('grant_type', 'authorization_code');
+    let result: any;
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      result = await response.json();
+    } catch {
+      fail(503, 'WECHAT_UNAVAILABLE', '微信登录暂不可用，请稍后重试');
+    }
+    if (!result?.openid || result.errcode) {
+      fail(401, 'WECHAT_LOGIN_FAILED', '微信登录凭据无效，请重新登录');
+    }
+    return { appId: c.wechatAppId, subject: String(result.openid) };
+  }
+  async attempt(db: Db, kind: string, id: string, credential: string) {
+    const value = await maybe(
+      db,
+      'SELECT * FROM auth_attempts WHERE kind=$1 AND attempt_id=$2 AND credential_hash=$3 AND expires_at>now()',
+      [kind, id, digest(credential)],
+    );
+    if (!value) {
+      return null;
+    }
+    const response = decrypt(this.s, value.responseCiphertext);
+    if (response?.session?.sessionId) {
+      const session = await maybe(
+        db,
+        'SELECT s.*,EXISTS(SELECT 1 FROM pin_credentials p WHERE p.user_id=s.user_id AND p.enabled_at IS NOT NULL) AS pin_enabled FROM auth_sessions s WHERE s.id=$1',
+        [response.session.sessionId],
+      );
+      if (!session) {
+        return null;
+      }
+      try {
+        await this.recheck(db, this.actor(session), { profile: false, allowLocked: true });
+      } catch {
+        return null;
+      }
+    }
+    return response;
+  }
+  async saveAttempt(db: Db, kind: string, id: string, credential: string, response: unknown) {
+    await db.query(
+      `INSERT INTO auth_attempts(kind,attempt_id,credential_hash,response_ciphertext,expires_at) VALUES($1,$2,$3,$4,now()+interval '2 minutes') ON CONFLICT(kind,attempt_id,credential_hash) DO NOTHING`,
+      [kind, id, digest(credential), encrypt(this.s, response)],
+    );
+  }
 }
 export const createAuth = (services: Services) => new AuthService(services);
 
 export async function registerIdentity(app: FastifyInstance, s: Services) {
- const auth=s.auth as AuthService;
- app.get('/public/privacy',async request=>ok(request,{policyVersion:config(s).privacyVersion??'2026-09-19-v1',supportContact:config(s).supportContact,mediaRetention:{unsubmittedHours:24,submittedDays:180},content:'积乐圈用于家庭日常活动与奖励约定。使用前须微信登录并上传头像、填写昵称；头像可为自选插画，不要求真人或实名。完成照片可选，仅对应孩子与有权家长可见。未正式提交照片上传后24小时清理，正式照片首次提交后180天清理。可在本人设置申请个人数据处理；负责人可申请家庭导出或删除。请勿上传无权提供的他人资料。'}));
- app.post('/auth/wechat/login',async request=>{ const b=z.object({code:z.string().min(1).max(512),loginAttemptId:uuid}).strict().parse(request.body); const previous=await connection(s,db=>auth.attempt(db,'LOGIN',b.loginAttemptId,b.code)); if(previous)return ok(request,previous); const identity=await auth.wechat(b.code); const result=await transaction(s,async db=>{ await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`wx:${identity.appId}:${identity.subject}`]); const prior=await auth.attempt(db,'LOGIN',b.loginAttemptId,b.code); if(prior)return prior; let user=await maybe(db,'SELECT u.* FROM users u JOIN auth_identities i ON i.user_id=u.id WHERE i.provider=\'WECHAT\' AND i.app_id=$1 AND i.subject=$2',[identity.appId,identity.subject]); if(!user){user=await one(db,'INSERT INTO users DEFAULT VALUES RETURNING *',[]);await db.query('INSERT INTO auth_identities(user_id,app_id,subject) VALUES($1,$2,$3)',[user.id,identity.appId,identity.subject]);} if(user.status!=='ACTIVE')fail(403,'ACCOUNT_DISABLED','此账号已停用');await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[user.id]);user=await one(db,'SELECT * FROM users WHERE id=$1',[user.id]);const credential=await maybe(db,'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',[user.id]);const mode=credential?.enabledAt?'LOCKED':user.profileCompletedAt?'ACCOUNT':'PROFILE_ONLY';const answer=await auth.issue(db,user,mode);await auth.saveAttempt(db,'LOGIN',b.loginAttemptId,b.code,answer);return answer;});return ok(request,result); });
- app.post('/auth/refresh',async request=>{const b=z.object({refreshToken:z.string().min(20),refreshAttemptId:uuid}).strict().parse(request.body);const answer=await transaction(s,async db=>{await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`REFRESH:${b.refreshAttemptId}:${digest(b.refreshToken)}`]);const prior=await auth.attempt(db,'REFRESH',b.refreshAttemptId,b.refreshToken);if(prior)return prior;const preliminary=await maybe(db,'SELECT user_id,family_id FROM auth_sessions WHERE refresh_hash=$1',[digest(b.refreshToken)]);if(!preliminary)fail(401,'SESSION_EXPIRED','请重新微信登录');await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[preliminary.userId]);if(preliminary.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[preliminary.familyId]);const old=await maybe(db,'SELECT * FROM auth_sessions WHERE refresh_hash=$1 FOR UPDATE',[digest(b.refreshToken)]);if(!old||old.revokedAt||new Date(old.refreshExpiresAt).getTime()<=Date.now())fail(401,'SESSION_EXPIRED','请重新微信登录');const user=await one(db,'SELECT * FROM users WHERE id=$1',[old.userId]);if(user.status!=='ACTIVE'||Number(user.securityVersion)!==Number(old.securityVersion))fail(401,'SESSION_REVOKED','会话已失效');await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[old.userId]);if(old.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[old.familyId]);await auth.recheck(db,auth.actor(old),{profile:false,allowLocked:true,allowExpired:true});await auth.revoke(db,old.id);const fresh=await auth.issue(db,user,old.mode,{childSessionSource:old.childSessionSource,familyId:old.familyId,childId:old.childId,membershipId:old.sourceMembershipId,bindingVersion:old.bindingVersion,pinVerifiedAt:old.pinVerifiedAt});await auth.saveAttempt(db,'REFRESH',b.refreshAttemptId,b.refreshToken,fresh);return fresh;});return ok(request,answer);});
- app.get('/auth/session',async request=>{const actor=await auth.require(request,{profile:false,allowLocked:true});return connection(s,async db=>ok(request,auth.sessionView(await one(db,'SELECT s.*,EXISTS(SELECT 1 FROM pin_credentials p WHERE p.user_id=s.user_id AND p.enabled_at IS NOT NULL) AS pin_enabled FROM auth_sessions s WHERE s.id=$1',[actor.sessionId]),await one(db,'SELECT * FROM users WHERE id=$1',[actor.userId]))));});
- app.post('/auth/logout',async request=>{const actor=await auth.require(request,{profile:false,allowLocked:true});await connection(s,db=>auth.revoke(db,actor.sessionId));return ok(request,{loggedOut:true});});
- app.get('/me/profile',async request=>{const actor=await auth.require(request,{profile:false,account:true});return connection(s,async db=>ok(request,publicProfile(await one(db,'SELECT * FROM users WHERE id=$1',[actor.userId]))));});
- app.put('/me/profile',async request=>{const b=z.object({displayName:validName,avatarMediaId:uuid,privacyVersion:z.string().min(1).max(80),expectedVersion:z.number().int().positive()}).strict().parse(request.body);return s.mutate(request,{profile:false,account:true,scope:'PROFILE_SELF',exclusiveUser:true},async(db:Db,actor:Actor)=>{const user=await one(db,'SELECT * FROM users WHERE id=$1 FOR UPDATE',[actor.userId]);versionOf(user,b.expectedVersion);const asset=await one(db,'SELECT * FROM media_assets WHERE id=$1 FOR UPDATE',[b.avatarMediaId]);if(asset.purpose!=='USER_AVATAR'||asset.uploaderUserId!==actor.userId||asset.status!=='READY')fail(409,'MEDIA_SCOPE_MISMATCH','请选择已成功处理的本人上传头像');if(b.privacyVersion!==config(s).privacyVersion)fail(409,'PRIVACY_VERSION_CHANGED','隐私说明已更新，请重新阅读');const profile=await one(db,'UPDATE users SET display_name=$2,avatar_media_id=$3,profile_completed_at=COALESCE(profile_completed_at,now()),version=version+1,updated_at=now() WHERE id=$1 RETURNING *',[actor.userId,b.displayName,b.avatarMediaId]);await db.query('INSERT INTO consent_records(user_id,policy_version) VALUES($1,$2) ON CONFLICT DO NOTHING',[actor.userId,b.privacyVersion]);await db.query('UPDATE auth_sessions SET mode=CASE WHEN mode=\'PROFILE_ONLY\' THEN \'ACCOUNT\' ELSE mode END WHERE id=$1',[actor.sessionId]);await db.query('UPDATE media_assets SET retention_until=NULL WHERE id=$1',[asset.id]);return{profile:publicProfile(profile),session:auth.sessionView(await one(db,'SELECT s.*,EXISTS(SELECT 1 FROM pin_credentials p WHERE p.user_id=s.user_id AND p.enabled_at IS NOT NULL) AS pin_enabled FROM auth_sessions s WHERE s.id=$1',[actor.sessionId]),profile)};});});
- app.get('/me/contexts',async request=>{const actor=await auth.require(request,{account:true});return connection(s,async db=>ok(request,{items:await rows(db,`SELECT p.id AS context_id,jsonb_build_object('id',f.id,'name',f.name,'status',f.status) AS family,CASE WHEN p.kind='GUARDIAN' THEN CASE WHEN f.owner_membership_id=p.membership_id THEN 'OWNER' ELSE 'GUARDIAN' END ELSE 'CHILD' END AS relation,CASE WHEN c.id IS NOT NULL THEN jsonb_build_object('id',c.id,'nickname',c.nickname,'avatarMediaId',c.avatar_media_id) END AS child,EXISTS(SELECT 1 FROM pin_credentials pc WHERE pc.user_id=$1 AND pc.enabled_at IS NOT NULL) AS requires_pin FROM family_principals p JOIN families f ON f.id=p.family_id LEFT JOIN child_profiles c ON c.id=p.child_id LEFT JOIN guardian_memberships g ON g.id=p.membership_id WHERE p.user_id=$1 AND f.status<>'DELETING' AND ((p.kind='GUARDIAN' AND g.status='ACTIVE') OR (p.kind='CHILD' AND c.status='ACTIVE' AND f.status='ACTIVE')) ORDER BY f.created_at,f.id`,[actor.userId]),nextCursor:null,hasMore:false}));});
- app.post('/auth/context',async request=>{
-  const b=z.object({contextId:uuid}).strict().parse(request.body);const actor=await auth.require(request,{account:true});
-  const answer=await transaction(s,async db=>{
-   await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[actor.userId]);
-   const initial=await maybe(db,'SELECT * FROM family_principals WHERE id=$1 AND user_id=$2',[b.contextId,actor.userId]);if(!initial)fail(404,'RESOURCE_NOT_FOUND','此身份不存在');
-   const families=[...new Set([actor.familyId,initial.familyId].filter(Boolean))].sort();for(const id of families)await one(db,'SELECT id FROM families WHERE id=$1 FOR SHARE',[id]);
-   await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE',[actor.sessionId]);await auth.recheck(db,actor,{account:true});
-   const context=await maybe(db,'SELECT * FROM family_principals WHERE id=$1 AND user_id=$2',[b.contextId,actor.userId]);if(!context)fail(404,'RESOURCE_NOT_FOUND','此身份已失效');
-   const targetFamily=await one(db,'SELECT id,status FROM families WHERE id=$1',[context.familyId]);if(targetFamily.status==='DELETING')fail(423,'FAMILY_FROZEN','家庭受恢复保护或正在删除，请联系支持');
-   const user=await one(db,'SELECT * FROM users WHERE id=$1',[actor.userId]),credential=await maybe(db,'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',[actor.userId]);
-   await auth.revoke(db,actor.sessionId);
-   if(context.kind==='GUARDIAN'){const membership=await maybe(db,`SELECT * FROM guardian_memberships WHERE id=$1 AND status='ACTIVE'`,[context.membershipId]);if(!membership)fail(403,'FORBIDDEN','家庭权限已失效');if(credential?.enabledAt&&(actor.mode==='CHILD'||!actor.pinVerifiedAt))return auth.issue(db,user,'LOCKED');return auth.issue(db,user,'GUARDIAN',{familyId:context.familyId,membershipId:context.membershipId,pinVerifiedAt:actor.pinVerifiedAt});}
-   const child=await maybe(db,`SELECT c.* FROM child_profiles c JOIN families f ON f.id=c.family_id WHERE c.id=$1 AND c.bound_user_id=$2 AND c.status='ACTIVE' AND f.status='ACTIVE'`,[context.childId,actor.userId]);if(!child)fail(403,'FORBIDDEN','孩子绑定已失效');return auth.issue(db,user,'CHILD',{familyId:child.familyId,childId:child.id,bindingVersion:child.bindingVersion,childSessionSource:'DIRECT'});
-  });return ok(request,answer);
- });
- await registerPinRoutes(app,s,auth);
+  const auth = s.auth as AuthService;
+  app.get('/public/privacy', async (request) =>
+    ok(request, {
+      policyVersion: config(s).privacyVersion ?? '2026-09-19-v1',
+      supportContact: config(s).supportContact,
+      mediaRetention: { unsubmittedHours: 24, submittedDays: 180 },
+      content:
+        '积乐圈用于家庭日常活动与奖励约定。使用前须微信登录并上传头像、填写昵称；头像可为自选插画，不要求真人或实名。完成照片可选，仅对应孩子与有权家长可见。未正式提交照片上传后24小时清理，正式照片首次提交后180天清理。可在本人设置申请个人数据处理；负责人可申请家庭导出或删除。请勿上传无权提供的他人资料。',
+    }),
+  );
+  app.post('/auth/wechat/login', async (request) => {
+    const b = z
+      .object({ code: z.string().min(1).max(512), loginAttemptId: uuid })
+      .strict()
+      .parse(request.body);
+    const previous = await connection(s, (db) =>
+      auth.attempt(db, 'LOGIN', b.loginAttemptId, b.code),
+    );
+    if (previous) {
+      return ok(request, previous);
+    }
+    const identity = await auth.wechat(b.code);
+    const result = await transaction(s, async (db) => {
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `wx:${identity.appId}:${identity.subject}`,
+      ]);
+      const prior = await auth.attempt(db, 'LOGIN', b.loginAttemptId, b.code);
+      if (prior) {
+        return prior;
+      }
+      let user = await maybe(
+        db,
+        "SELECT u.* FROM users u JOIN auth_identities i ON i.user_id=u.id WHERE i.provider='WECHAT' AND i.app_id=$1 AND i.subject=$2",
+        [identity.appId, identity.subject],
+      );
+      if (!user) {
+        user = await one(db, 'INSERT INTO users DEFAULT VALUES RETURNING *', []);
+        await db.query('INSERT INTO auth_identities(user_id,app_id,subject) VALUES($1,$2,$3)', [
+          user.id,
+          identity.appId,
+          identity.subject,
+        ]);
+      }
+      if (user.status !== 'ACTIVE') {
+        fail(403, 'ACCOUNT_DISABLED', '此账号已停用');
+      }
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [user.id]);
+      user = await one(db, 'SELECT * FROM users WHERE id=$1', [user.id]);
+      const credential = await maybe(
+        db,
+        'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',
+        [user.id],
+      );
+      const mode = credential?.enabledAt
+        ? 'LOCKED'
+        : user.profileCompletedAt
+          ? 'ACCOUNT'
+          : 'PROFILE_ONLY';
+      const answer = await auth.issue(db, user, mode);
+      await auth.saveAttempt(db, 'LOGIN', b.loginAttemptId, b.code, answer);
+      return answer;
+    });
+    return ok(request, result);
+  });
+  app.post('/auth/refresh', async (request) => {
+    const b = z
+      .object({ refreshToken: z.string().min(20), refreshAttemptId: uuid })
+      .strict()
+      .parse(request.body);
+    const answer = await transaction(s, async (db) => {
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `REFRESH:${b.refreshAttemptId}:${digest(b.refreshToken)}`,
+      ]);
+      const prior = await auth.attempt(db, 'REFRESH', b.refreshAttemptId, b.refreshToken);
+      if (prior) {
+        return prior;
+      }
+      const preliminary = await maybe(
+        db,
+        'SELECT user_id,family_id FROM auth_sessions WHERE refresh_hash=$1',
+        [digest(b.refreshToken)],
+      );
+      if (!preliminary) {
+        fail(401, 'SESSION_EXPIRED', '请重新微信登录');
+      }
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [preliminary.userId]);
+      if (preliminary.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [preliminary.familyId]);
+      }
+      const old = await maybe(db, 'SELECT * FROM auth_sessions WHERE refresh_hash=$1 FOR UPDATE', [
+        digest(b.refreshToken),
+      ]);
+      if (!old || old.revokedAt || new Date(old.refreshExpiresAt).getTime() <= Date.now()) {
+        fail(401, 'SESSION_EXPIRED', '请重新微信登录');
+      }
+      const user = await one(db, 'SELECT * FROM users WHERE id=$1', [old.userId]);
+      if (
+        user.status !== 'ACTIVE' ||
+        Number(user.securityVersion) !== Number(old.securityVersion)
+      ) {
+        fail(401, 'SESSION_REVOKED', '会话已失效');
+      }
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [old.userId]);
+      if (old.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [old.familyId]);
+      }
+      await auth.recheck(db, auth.actor(old), {
+        profile: false,
+        allowLocked: true,
+        allowExpired: true,
+      });
+      await auth.revoke(db, old.id);
+      const fresh = await auth.issue(db, user, old.mode, {
+        childSessionSource: old.childSessionSource,
+        familyId: old.familyId,
+        childId: old.childId,
+        membershipId: old.sourceMembershipId,
+        bindingVersion: old.bindingVersion,
+        pinVerifiedAt: old.pinVerifiedAt,
+      });
+      await auth.saveAttempt(db, 'REFRESH', b.refreshAttemptId, b.refreshToken, fresh);
+      return fresh;
+    });
+    return ok(request, answer);
+  });
+  app.get('/auth/session', async (request) => {
+    const actor = await auth.require(request, { profile: false, allowLocked: true });
+    return connection(s, async (db) =>
+      ok(
+        request,
+        auth.sessionView(
+          await one(
+            db,
+            'SELECT s.*,EXISTS(SELECT 1 FROM pin_credentials p WHERE p.user_id=s.user_id AND p.enabled_at IS NOT NULL) AS pin_enabled FROM auth_sessions s WHERE s.id=$1',
+            [actor.sessionId],
+          ),
+          await one(db, 'SELECT * FROM users WHERE id=$1', [actor.userId]),
+        ),
+      ),
+    );
+  });
+  app.post('/auth/logout', async (request) => {
+    const actor = await auth.require(request, { profile: false, allowLocked: true });
+    await connection(s, (db) => auth.revoke(db, actor.sessionId));
+    return ok(request, { loggedOut: true });
+  });
+  app.get('/me/profile', async (request) => {
+    const actor = await auth.require(request, { profile: false, account: true });
+    return connection(s, async (db) =>
+      ok(request, publicProfile(await one(db, 'SELECT * FROM users WHERE id=$1', [actor.userId]))),
+    );
+  });
+  app.put('/me/profile', async (request) => {
+    const b = z
+      .object({
+        displayName: validName,
+        avatarMediaId: uuid,
+        privacyVersion: z.string().min(1).max(80),
+        expectedVersion: z.number().int().positive(),
+      })
+      .strict()
+      .parse(request.body);
+    return s.mutate(
+      request,
+      { profile: false, account: true, scope: 'PROFILE_SELF', exclusiveUser: true },
+      async (db: Db, actor: Actor) => {
+        const user = await one(db, 'SELECT * FROM users WHERE id=$1 FOR UPDATE', [actor.userId]);
+        versionOf(user, b.expectedVersion);
+        const asset = await one(db, 'SELECT * FROM media_assets WHERE id=$1 FOR UPDATE', [
+          b.avatarMediaId,
+        ]);
+        if (
+          asset.purpose !== 'USER_AVATAR' ||
+          asset.uploaderUserId !== actor.userId ||
+          asset.status !== 'READY'
+        ) {
+          fail(409, 'MEDIA_SCOPE_MISMATCH', '请选择已成功处理的本人上传头像');
+        }
+        if (b.privacyVersion !== config(s).privacyVersion) {
+          fail(409, 'PRIVACY_VERSION_CHANGED', '隐私说明已更新，请重新阅读');
+        }
+        const profile = await one(
+          db,
+          'UPDATE users SET display_name=$2,avatar_media_id=$3,profile_completed_at=COALESCE(profile_completed_at,now()),version=version+1,updated_at=now() WHERE id=$1 RETURNING *',
+          [actor.userId, b.displayName, b.avatarMediaId],
+        );
+        await db.query(
+          'INSERT INTO consent_records(user_id,policy_version) VALUES($1,$2) ON CONFLICT DO NOTHING',
+          [actor.userId, b.privacyVersion],
+        );
+        await db.query(
+          "UPDATE auth_sessions SET mode=CASE WHEN mode='PROFILE_ONLY' THEN 'ACCOUNT' ELSE mode END WHERE id=$1",
+          [actor.sessionId],
+        );
+        await db.query('UPDATE media_assets SET retention_until=NULL WHERE id=$1', [asset.id]);
+        return {
+          profile: publicProfile(profile),
+          session: auth.sessionView(
+            await one(
+              db,
+              'SELECT s.*,EXISTS(SELECT 1 FROM pin_credentials p WHERE p.user_id=s.user_id AND p.enabled_at IS NOT NULL) AS pin_enabled FROM auth_sessions s WHERE s.id=$1',
+              [actor.sessionId],
+            ),
+            profile,
+          ),
+        };
+      },
+    );
+  });
+  app.get('/me/contexts', async (request) => {
+    const actor = await auth.require(request, { account: true });
+    return connection(s, async (db) =>
+      ok(request, {
+        items: await rows(
+          db,
+          `SELECT p.id AS context_id,jsonb_build_object('id',f.id,'name',f.name,'status',f.status) AS family,CASE WHEN p.kind='GUARDIAN' THEN CASE WHEN f.owner_membership_id=p.membership_id THEN 'OWNER' ELSE 'GUARDIAN' END ELSE 'CHILD' END AS relation,CASE WHEN c.id IS NOT NULL THEN jsonb_build_object('id',c.id,'nickname',c.nickname,'avatarMediaId',c.avatar_media_id) END AS child,EXISTS(SELECT 1 FROM pin_credentials pc WHERE pc.user_id=$1 AND pc.enabled_at IS NOT NULL) AS requires_pin FROM family_principals p JOIN families f ON f.id=p.family_id LEFT JOIN child_profiles c ON c.id=p.child_id LEFT JOIN guardian_memberships g ON g.id=p.membership_id WHERE p.user_id=$1 AND f.status<>'DELETING' AND ((p.kind='GUARDIAN' AND g.status='ACTIVE') OR (p.kind='CHILD' AND c.status='ACTIVE' AND f.status='ACTIVE')) ORDER BY f.created_at,f.id`,
+          [actor.userId],
+        ),
+        nextCursor: null,
+        hasMore: false,
+      }),
+    );
+  });
+  app.post('/auth/context', async (request) => {
+    const b = z.object({ contextId: uuid }).strict().parse(request.body);
+    const actor = await auth.require(request, { account: true });
+    const answer = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [actor.userId]);
+      const initial = await maybe(
+        db,
+        'SELECT * FROM family_principals WHERE id=$1 AND user_id=$2',
+        [b.contextId, actor.userId],
+      );
+      if (!initial) {
+        fail(404, 'RESOURCE_NOT_FOUND', '此身份不存在');
+      }
+      const families = [...new Set([actor.familyId, initial.familyId].filter(Boolean))].sort();
+      for (const id of families) {
+        await one(db, 'SELECT id FROM families WHERE id=$1 FOR SHARE', [id]);
+      }
+      await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE', [actor.sessionId]);
+      await auth.recheck(db, actor, { account: true });
+      const context = await maybe(
+        db,
+        'SELECT * FROM family_principals WHERE id=$1 AND user_id=$2',
+        [b.contextId, actor.userId],
+      );
+      if (!context) {
+        fail(404, 'RESOURCE_NOT_FOUND', '此身份已失效');
+      }
+      const targetFamily = await one(db, 'SELECT id,status FROM families WHERE id=$1', [
+        context.familyId,
+      ]);
+      if (targetFamily.status === 'DELETING') {
+        fail(423, 'FAMILY_FROZEN', '家庭受恢复保护或正在删除，请联系支持');
+      }
+      const user = await one(db, 'SELECT * FROM users WHERE id=$1', [actor.userId]);
+      const credential = await maybe(
+        db,
+        'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',
+        [actor.userId],
+      );
+      await auth.revoke(db, actor.sessionId);
+      if (context.kind === 'GUARDIAN') {
+        const membership = await maybe(
+          db,
+          `SELECT * FROM guardian_memberships WHERE id=$1 AND status='ACTIVE'`,
+          [context.membershipId],
+        );
+        if (!membership) {
+          fail(403, 'FORBIDDEN', '家庭权限已失效');
+        }
+        if (credential?.enabledAt && (actor.mode === 'CHILD' || !actor.pinVerifiedAt)) {
+          return auth.issue(db, user, 'LOCKED');
+        }
+        return auth.issue(db, user, 'GUARDIAN', {
+          familyId: context.familyId,
+          membershipId: context.membershipId,
+          pinVerifiedAt: actor.pinVerifiedAt,
+        });
+      }
+      const child = await maybe(
+        db,
+        `SELECT c.* FROM child_profiles c JOIN families f ON f.id=c.family_id WHERE c.id=$1 AND c.bound_user_id=$2 AND c.status='ACTIVE' AND f.status='ACTIVE'`,
+        [context.childId, actor.userId],
+      );
+      if (!child) {
+        fail(403, 'FORBIDDEN', '孩子绑定已失效');
+      }
+      return auth.issue(db, user, 'CHILD', {
+        familyId: child.familyId,
+        childId: child.id,
+        bindingVersion: child.bindingVersion,
+        childSessionSource: 'DIRECT',
+      });
+    });
+    return ok(request, answer);
+  });
+  await registerPinRoutes(app, s, auth);
 }
 
-async function registerPinRoutes(app:FastifyInstance,s:Services,auth:AuthService){
- app.post('/auth/pin/enroll',async request=>{const b=z.object({pin,confirmationPin:pin}).strict().parse(request.body);if(b.pin!==b.confirmationPin)fail(400,'VALIDATION_ERROR','两次密码不一致');const actor=await auth.require(request,{guardian:true});const code=recoveryCode(),hash=await passwordHash(b.pin),enrollmentId=randomUUID();const answer=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[actor.userId]);if(actor.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[actor.familyId]);await auth.recheck(db,actor,{guardian:true});const current=await maybe(db,'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',[actor.userId]);if(current?.enabledAt)fail(409,'INVALID_STATE','家长密码已设置');await db.query(`INSERT INTO pin_credentials(user_id,pending_pin_hash,pending_recovery_hash,enrollment_id,enrollment_expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes') ON CONFLICT(user_id) DO UPDATE SET pending_pin_hash=$2,pending_recovery_hash=$3,enrollment_id=$4,enrollment_expires_at=now()+interval '10 minutes'`,[actor.userId,hash,digest(normalizedRecovery(code)),enrollmentId]);return{enrollmentId,recoveryCode:code,expiresAt:new Date(Date.now()+600000).toISOString()};});return ok(request,answer);});
- app.post('/auth/pin/enroll/confirm',async request=>{const b=z.object({enrollmentId:uuid,recoverySaved:z.literal(true)}).strict().parse(request.body);const actor=await auth.require(request,{guardian:true});await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[actor.userId]);if(actor.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[actor.familyId]);await auth.recheck(db,actor,{guardian:true});const credential=await maybe(db,'SELECT * FROM pin_credentials WHERE user_id=$1 FOR UPDATE',[actor.userId]);if(!credential||credential.enrollmentId!==b.enrollmentId||new Date(credential.enrollmentExpiresAt).getTime()<=Date.now())fail(409,'INVALID_STATE','设置已过期，请重新设置');await db.query('UPDATE pin_credentials SET pin_hash=pending_pin_hash,recovery_hash=pending_recovery_hash,pending_pin_hash=NULL,pending_recovery_hash=NULL,enrollment_id=NULL,enrollment_expires_at=NULL,enabled_at=now() WHERE user_id=$1',[actor.userId]);await db.query('UPDATE auth_sessions SET pin_verified_at=now() WHERE id=$1',[actor.sessionId]);await queueProtection(db,'PIN_ENROLLED',{userId:actor.userId,securityVersion:actor.securityVersion,pinEnabled:true,...await one(db,'SELECT credential_version,enabled_at AS changed_at FROM pin_credentials WHERE user_id=$1',[actor.userId])});});return ok(request,{pinEnabled:true});});
- app.post('/auth/pin/unlock',async request=>{const b=z.object({pin,targetContextId:uuid.optional()}).strict().parse(request.body);const actor=await auth.require(request,{profile:false,allowLocked:true});if(actor.mode!=='LOCKED')fail(409,'INVALID_STATE','当前不需要解锁');const result=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[actor.userId]);await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE',[actor.sessionId]);await auth.recheck(db,actor,{profile:false,allowLocked:true});if(!await auth.verifyPin(db,actor.userId,b.pin))return{pinFailed:true};const user=await one(db,'SELECT * FROM users WHERE id=$1',[actor.userId]);await auth.revoke(db,actor.sessionId);return auth.issue(db,user,user.profileCompletedAt?'ACCOUNT':'PROFILE_ONLY',{pinVerifiedAt:new Date()});});if((result as any).pinFailed)fail(403,'PIN_INVALID','密码不正确，请重试');return ok(request,result);});
- app.post('/auth/child-mode',async request=>{const b=z.object({familyId:uuid,childId:uuid}).strict().parse(request.body);const actor=await auth.require(request,{familyId:b.familyId,childId:b.childId,guardian:true,write:true});const result=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[actor.userId]);await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[b.familyId]);await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE',[actor.sessionId]);await auth.recheck(db,actor,{familyId:b.familyId,childId:b.childId,guardian:true,write:true});const pinRow=await maybe(db,'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',[actor.userId]);if(!pinRow?.enabledAt)fail(403,'PIN_REQUIRED','进入孩子模式前请先设置家长密码并保存恢复码');await auth.revoke(db,actor.sessionId);return auth.issue(db,await one(db,'SELECT * FROM users WHERE id=$1',[actor.userId]),'CHILD',{familyId:b.familyId,childId:b.childId,membershipId:(actor as any).membershipId,childSessionSource:'DELEGATED'});});return ok(request,result);});
- app.post('/auth/child-mode/exit',async request=>{const b=z.object({pin}).strict().parse(request.body);const actor=await auth.require(request);if(actor.mode!=='CHILD'||actor.childSessionSource!=='DELEGATED')fail(403,'FORBIDDEN','自己的孩子账号不能用家长密码升权');const result=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[actor.userId]);await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[actor.familyId]);await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE',[actor.sessionId]);await auth.recheck(db,actor);if(!await auth.verifyPin(db,actor.userId,b.pin))return{pinFailed:true};await auth.revoke(db,actor.sessionId);return auth.issue(db,await one(db,'SELECT * FROM users WHERE id=$1',[actor.userId]),'GUARDIAN',{familyId:actor.familyId,membershipId:(actor as any).membershipId,pinVerifiedAt:new Date()});});if((result as any).pinFailed)fail(403,'PIN_INVALID','密码不正确，请重试');return ok(request,result);});
- app.post('/auth/pin/change',async request=>{const b=z.object({oldPin:pin,newPin:pin,confirmationPin:pin}).strict().parse(request.body);if(b.newPin!==b.confirmationPin)fail(400,'VALIDATION_ERROR','两次新密码不一致');const actor=await auth.require(request,{guardian:true});const hash=await passwordHash(b.newPin);const result=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[actor.userId]);if(actor.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[actor.familyId]);await auth.recheck(db,actor,{guardian:true});if(!await auth.verifyPin(db,actor.userId,b.oldPin))return{pinFailed:true};await db.query('UPDATE pin_credentials SET pin_hash=$2,credential_version=credential_version+1 WHERE user_id=$1',[actor.userId,hash]);const user=await one(db,'UPDATE users SET security_version=security_version+1 WHERE id=$1 RETURNING *',[actor.userId]);await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[actor.userId]);await queueProtection(db,'PIN_CHANGED',{userId:actor.userId,securityVersion:user.securityVersion,pinEnabled:true,...await one(db,'SELECT credential_version,enabled_at AS changed_at FROM pin_credentials WHERE user_id=$1',[actor.userId])});return auth.issue(db,user,'LOCKED');});if((result as any).pinFailed)fail(403,'PIN_INVALID','原密码不正确');return ok(request,result);});
- app.post('/auth/pin/recover',async request=>{const b=z.object({newWechatCode:z.string().min(1).max(512),recoveryCode:z.string().min(20).max(100),newPin:pin,confirmationPin:pin,recoveryAttemptId:uuid}).strict().parse(request.body);if(b.newPin!==b.confirmationPin)fail(400,'VALIDATION_ERROR','两次新密码不一致');const raw=request.headers.authorization;if(!raw?.startsWith('Bearer '))fail(401,'SESSION_EXPIRED','请先重新微信登录');const original=await connection(s,db=>maybe(db,'SELECT * FROM auth_sessions WHERE access_hash=$1',[digest(raw!.slice(7))]));if(!original||original.mode!=='LOCKED')fail(403,'FORBIDDEN','请先重新微信登录');const actor=auth.actor(original);const kind=`RECOVER:${actor.sessionId}`;const replayCredential=JSON.stringify([b.recoveryCode,b.newPin,b.confirmationPin]);const prior=await connection(s,db=>auth.attempt(db,kind,b.recoveryAttemptId,replayCredential));if(prior)return ok(request,prior);await connection(s,db=>auth.recheck(db,actor,{profile:false,allowLocked:true}));const identity=await auth.wechat(b.newWechatCode),hash=await passwordHash(b.newPin),newCode=recoveryCode();const answer=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[actor.userId]);await auth.recheck(db,actor,{profile:false,allowLocked:true});const own=await maybe(db,'SELECT user_id FROM auth_identities WHERE app_id=$1 AND subject=$2',[identity.appId,identity.subject]);if(own?.userId!==actor.userId)fail(403,'FORBIDDEN','请使用原微信账号验证');const credential=await maybe(db,'SELECT * FROM pin_credentials WHERE user_id=$1 FOR UPDATE',[actor.userId]);if(credential?.recoveryBlocked)fail(403,'PIN_RECOVERY_REQUIRED','账号恢复保护已启用，请通过支持申请完成独立核验');if(!credential||credential.recoveryHash!==digest(normalizedRecovery(b.recoveryCode)))fail(403,'PIN_RECOVERY_REQUIRED','恢复码无效或已使用');await db.query('UPDATE pin_credentials SET pin_hash=$2,recovery_hash=$3,failure_count=0,locked_until=NULL,credential_version=credential_version+1 WHERE user_id=$1',[actor.userId,hash,digest(normalizedRecovery(newCode))]);const user=await one(db,'UPDATE users SET security_version=security_version+1 WHERE id=$1 RETURNING *',[actor.userId]);await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[actor.userId]);await queueProtection(db,'PIN_RECOVERED',{userId:actor.userId,securityVersion:user.securityVersion,pinEnabled:true,...await one(db,'SELECT credential_version,enabled_at AS changed_at FROM pin_credentials WHERE user_id=$1',[actor.userId])});const result={...await auth.issue(db,user,'LOCKED'),recoveryCode:newCode};await auth.saveAttempt(db,kind,b.recoveryAttemptId,replayCredential,result);return result;});return ok(request,answer);});
- app.post('/auth/step-up',async request=>{const b=z.object({pin:pin.optional(),newWechatCode:z.string().min(1).max(512).optional(),action:z.enum(['OWNERSHIP_TRANSFER','UNBIND_CHILD','ARCHIVE_FAMILY','EXPORT_SELF','DELETE_SELF','EXPORT_FAMILY','DELETE_FAMILY'])}).strict().parse(request.body);const actor=await auth.require(request,{account:true});const credential=await connection(s,db=>maybe(db,'SELECT enabled_at FROM pin_credentials WHERE user_id=$1',[actor.userId]));if(!credential?.enabledAt){if(!b.newWechatCode)fail(403,'PIN_REQUIRED','请重新验证微信身份');const identity=await auth.wechat(b.newWechatCode!);const own=await connection(s,db=>maybe(db,'SELECT user_id FROM auth_identities WHERE app_id=$1 AND subject=$2',[identity.appId,identity.subject]));if(own?.userId!==actor.userId)fail(403,'FORBIDDEN','微信身份不匹配');}const token=secret();const result=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[actor.userId]);if(actor.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[actor.familyId]);await auth.recheck(db,actor,{account:true});if(credential?.enabledAt&&(!b.pin||!await auth.verifyPin(db,actor.userId,b.pin)))return{pinFailed:true};await db.query('INSERT INTO step_up_grants(token_hash,session_id,action,expires_at) VALUES($1,$2,$3,now()+interval \'5 minutes\')',[digest(token),actor.sessionId,b.action]);return{stepUpToken:token,expiresAt:new Date(Date.now()+300000).toISOString()};});if((result as any).pinFailed)fail(403,'PIN_INVALID','密码不正确');return ok(request,result);});
+async function registerPinRoutes(app: FastifyInstance, s: Services, auth: AuthService) {
+  app.post('/auth/pin/enroll', async (request) => {
+    const b = z.object({ pin, confirmationPin: pin }).strict().parse(request.body);
+    if (b.pin !== b.confirmationPin) {
+      fail(400, 'VALIDATION_ERROR', '两次密码不一致');
+    }
+    const actor = await auth.require(request, { guardian: true });
+    const code = recoveryCode();
+    const hash = await passwordHash(b.pin);
+    const enrollmentId = randomUUID();
+    const answer = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [actor.userId]);
+      if (actor.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [actor.familyId]);
+      }
+      await auth.recheck(db, actor, { guardian: true });
+      const current = await maybe(db, 'SELECT enabled_at FROM pin_credentials WHERE user_id=$1', [
+        actor.userId,
+      ]);
+      if (current?.enabledAt) {
+        fail(409, 'INVALID_STATE', '家长密码已设置');
+      }
+      await db.query(
+        `INSERT INTO pin_credentials(user_id,pending_pin_hash,pending_recovery_hash,enrollment_id,enrollment_expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes') ON CONFLICT(user_id) DO UPDATE SET pending_pin_hash=$2,pending_recovery_hash=$3,enrollment_id=$4,enrollment_expires_at=now()+interval '10 minutes'`,
+        [actor.userId, hash, digest(normalizedRecovery(code)), enrollmentId],
+      );
+      return {
+        enrollmentId,
+        recoveryCode: code,
+        expiresAt: new Date(Date.now() + 600000).toISOString(),
+      };
+    });
+    return ok(request, answer);
+  });
+  app.post('/auth/pin/enroll/confirm', async (request) => {
+    const b = z
+      .object({ enrollmentId: uuid, recoverySaved: z.literal(true) })
+      .strict()
+      .parse(request.body);
+    const actor = await auth.require(request, { guardian: true });
+    await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [actor.userId]);
+      if (actor.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [actor.familyId]);
+      }
+      await auth.recheck(db, actor, { guardian: true });
+      const credential = await maybe(
+        db,
+        'SELECT * FROM pin_credentials WHERE user_id=$1 FOR UPDATE',
+        [actor.userId],
+      );
+      if (
+        !credential ||
+        credential.enrollmentId !== b.enrollmentId ||
+        new Date(credential.enrollmentExpiresAt).getTime() <= Date.now()
+      ) {
+        fail(409, 'INVALID_STATE', '设置已过期，请重新设置');
+      }
+      await db.query(
+        'UPDATE pin_credentials SET pin_hash=pending_pin_hash,recovery_hash=pending_recovery_hash,pending_pin_hash=NULL,pending_recovery_hash=NULL,enrollment_id=NULL,enrollment_expires_at=NULL,enabled_at=now() WHERE user_id=$1',
+        [actor.userId],
+      );
+      await db.query('UPDATE auth_sessions SET pin_verified_at=now() WHERE id=$1', [
+        actor.sessionId,
+      ]);
+      await queueProtection(db, 'PIN_ENROLLED', {
+        userId: actor.userId,
+        securityVersion: actor.securityVersion,
+        pinEnabled: true,
+        ...(await one(
+          db,
+          'SELECT credential_version,enabled_at AS changed_at FROM pin_credentials WHERE user_id=$1',
+          [actor.userId],
+        )),
+      });
+    });
+    return ok(request, { pinEnabled: true });
+  });
+  app.post('/auth/pin/unlock', async (request) => {
+    const b = z.object({ pin, targetContextId: uuid.optional() }).strict().parse(request.body);
+    const actor = await auth.require(request, { profile: false, allowLocked: true });
+    if (actor.mode !== 'LOCKED') {
+      fail(409, 'INVALID_STATE', '当前不需要解锁');
+    }
+    const result = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [actor.userId]);
+      await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE', [actor.sessionId]);
+      await auth.recheck(db, actor, { profile: false, allowLocked: true });
+      if (!(await auth.verifyPin(db, actor.userId, b.pin))) {
+        return { pinFailed: true };
+      }
+      const user = await one(db, 'SELECT * FROM users WHERE id=$1', [actor.userId]);
+      await auth.revoke(db, actor.sessionId);
+      return auth.issue(db, user, user.profileCompletedAt ? 'ACCOUNT' : 'PROFILE_ONLY', {
+        pinVerifiedAt: new Date(),
+      });
+    });
+    if ((result as any).pinFailed) {
+      fail(403, 'PIN_INVALID', '密码不正确，请重试');
+    }
+    return ok(request, result);
+  });
+  app.post('/auth/child-mode', async (request) => {
+    const b = z.object({ familyId: uuid, childId: uuid }).strict().parse(request.body);
+    const actor = await auth.require(request, {
+      familyId: b.familyId,
+      childId: b.childId,
+      guardian: true,
+      write: true,
+    });
+    const result = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [actor.userId]);
+      await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [b.familyId]);
+      await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE', [actor.sessionId]);
+      await auth.recheck(db, actor, {
+        familyId: b.familyId,
+        childId: b.childId,
+        guardian: true,
+        write: true,
+      });
+      const pinRow = await maybe(db, 'SELECT enabled_at FROM pin_credentials WHERE user_id=$1', [
+        actor.userId,
+      ]);
+      if (!pinRow?.enabledAt) {
+        fail(403, 'PIN_REQUIRED', '进入孩子模式前请先设置家长密码并保存恢复码');
+      }
+      await auth.revoke(db, actor.sessionId);
+      return auth.issue(
+        db,
+        await one(db, 'SELECT * FROM users WHERE id=$1', [actor.userId]),
+        'CHILD',
+        {
+          familyId: b.familyId,
+          childId: b.childId,
+          membershipId: (actor as any).membershipId,
+          childSessionSource: 'DELEGATED',
+        },
+      );
+    });
+    return ok(request, result);
+  });
+  app.post('/auth/child-mode/exit', async (request) => {
+    const b = z.object({ pin }).strict().parse(request.body);
+    const actor = await auth.require(request);
+    if (actor.mode !== 'CHILD' || actor.childSessionSource !== 'DELEGATED') {
+      fail(403, 'FORBIDDEN', '自己的孩子账号不能用家长密码升权');
+    }
+    const result = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [actor.userId]);
+      await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [actor.familyId]);
+      await db.query('SELECT id FROM auth_sessions WHERE id=$1 FOR UPDATE', [actor.sessionId]);
+      await auth.recheck(db, actor);
+      if (!(await auth.verifyPin(db, actor.userId, b.pin))) {
+        return { pinFailed: true };
+      }
+      await auth.revoke(db, actor.sessionId);
+      return auth.issue(
+        db,
+        await one(db, 'SELECT * FROM users WHERE id=$1', [actor.userId]),
+        'GUARDIAN',
+        {
+          familyId: actor.familyId,
+          membershipId: (actor as any).membershipId,
+          pinVerifiedAt: new Date(),
+        },
+      );
+    });
+    if ((result as any).pinFailed) {
+      fail(403, 'PIN_INVALID', '密码不正确，请重试');
+    }
+    return ok(request, result);
+  });
+  app.post('/auth/pin/change', async (request) => {
+    const b = z
+      .object({ oldPin: pin, newPin: pin, confirmationPin: pin })
+      .strict()
+      .parse(request.body);
+    if (b.newPin !== b.confirmationPin) {
+      fail(400, 'VALIDATION_ERROR', '两次新密码不一致');
+    }
+    const actor = await auth.require(request, { guardian: true });
+    const hash = await passwordHash(b.newPin);
+    const result = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [actor.userId]);
+      if (actor.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [actor.familyId]);
+      }
+      await auth.recheck(db, actor, { guardian: true });
+      if (!(await auth.verifyPin(db, actor.userId, b.oldPin))) {
+        return { pinFailed: true };
+      }
+      await db.query(
+        'UPDATE pin_credentials SET pin_hash=$2,credential_version=credential_version+1 WHERE user_id=$1',
+        [actor.userId, hash],
+      );
+      const user = await one(
+        db,
+        'UPDATE users SET security_version=security_version+1 WHERE id=$1 RETURNING *',
+        [actor.userId],
+      );
+      await db.query(
+        'UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',
+        [actor.userId],
+      );
+      await queueProtection(db, 'PIN_CHANGED', {
+        userId: actor.userId,
+        securityVersion: user.securityVersion,
+        pinEnabled: true,
+        ...(await one(
+          db,
+          'SELECT credential_version,enabled_at AS changed_at FROM pin_credentials WHERE user_id=$1',
+          [actor.userId],
+        )),
+      });
+      return auth.issue(db, user, 'LOCKED');
+    });
+    if ((result as any).pinFailed) {
+      fail(403, 'PIN_INVALID', '原密码不正确');
+    }
+    return ok(request, result);
+  });
+  app.post('/auth/pin/recover', async (request) => {
+    const b = z
+      .object({
+        newWechatCode: z.string().min(1).max(512),
+        recoveryCode: z.string().min(20).max(100),
+        newPin: pin,
+        confirmationPin: pin,
+        recoveryAttemptId: uuid,
+      })
+      .strict()
+      .parse(request.body);
+    if (b.newPin !== b.confirmationPin) {
+      fail(400, 'VALIDATION_ERROR', '两次新密码不一致');
+    }
+    const raw = request.headers.authorization;
+    if (!raw?.startsWith('Bearer ')) {
+      fail(401, 'SESSION_EXPIRED', '请先重新微信登录');
+    }
+    const original = await connection(s, (db) =>
+      maybe(db, 'SELECT * FROM auth_sessions WHERE access_hash=$1', [digest(raw!.slice(7))]),
+    );
+    if (!original || original.mode !== 'LOCKED') {
+      fail(403, 'FORBIDDEN', '请先重新微信登录');
+    }
+    const actor = auth.actor(original);
+    const kind = `RECOVER:${actor.sessionId}`;
+    const replayCredential = JSON.stringify([b.recoveryCode, b.newPin, b.confirmationPin]);
+    const prior = await connection(s, (db) =>
+      auth.attempt(db, kind, b.recoveryAttemptId, replayCredential),
+    );
+    if (prior) {
+      return ok(request, prior);
+    }
+    await connection(s, (db) => auth.recheck(db, actor, { profile: false, allowLocked: true }));
+    const identity = await auth.wechat(b.newWechatCode);
+    const hash = await passwordHash(b.newPin);
+    const newCode = recoveryCode();
+    const answer = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [actor.userId]);
+      await auth.recheck(db, actor, { profile: false, allowLocked: true });
+      const own = await maybe(
+        db,
+        'SELECT user_id FROM auth_identities WHERE app_id=$1 AND subject=$2',
+        [identity.appId, identity.subject],
+      );
+      if (own?.userId !== actor.userId) {
+        fail(403, 'FORBIDDEN', '请使用原微信账号验证');
+      }
+      const credential = await maybe(
+        db,
+        'SELECT * FROM pin_credentials WHERE user_id=$1 FOR UPDATE',
+        [actor.userId],
+      );
+      if (credential?.recoveryBlocked) {
+        fail(403, 'PIN_RECOVERY_REQUIRED', '账号恢复保护已启用，请通过支持申请完成独立核验');
+      }
+      if (!credential || credential.recoveryHash !== digest(normalizedRecovery(b.recoveryCode))) {
+        fail(403, 'PIN_RECOVERY_REQUIRED', '恢复码无效或已使用');
+      }
+      await db.query(
+        'UPDATE pin_credentials SET pin_hash=$2,recovery_hash=$3,failure_count=0,locked_until=NULL,credential_version=credential_version+1 WHERE user_id=$1',
+        [actor.userId, hash, digest(normalizedRecovery(newCode))],
+      );
+      const user = await one(
+        db,
+        'UPDATE users SET security_version=security_version+1 WHERE id=$1 RETURNING *',
+        [actor.userId],
+      );
+      await db.query(
+        'UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',
+        [actor.userId],
+      );
+      await queueProtection(db, 'PIN_RECOVERED', {
+        userId: actor.userId,
+        securityVersion: user.securityVersion,
+        pinEnabled: true,
+        ...(await one(
+          db,
+          'SELECT credential_version,enabled_at AS changed_at FROM pin_credentials WHERE user_id=$1',
+          [actor.userId],
+        )),
+      });
+      const result = { ...(await auth.issue(db, user, 'LOCKED')), recoveryCode: newCode };
+      await auth.saveAttempt(db, kind, b.recoveryAttemptId, replayCredential, result);
+      return result;
+    });
+    return ok(request, answer);
+  });
+  app.post('/auth/step-up', async (request) => {
+    const b = z
+      .object({
+        pin: pin.optional(),
+        newWechatCode: z.string().min(1).max(512).optional(),
+        action: z.enum([
+          'OWNERSHIP_TRANSFER',
+          'UNBIND_CHILD',
+          'ARCHIVE_FAMILY',
+          'EXPORT_SELF',
+          'DELETE_SELF',
+          'EXPORT_FAMILY',
+          'DELETE_FAMILY',
+        ]),
+      })
+      .strict()
+      .parse(request.body);
+    const actor = await auth.require(request, { account: true });
+    const credential = await connection(s, (db) =>
+      maybe(db, 'SELECT enabled_at FROM pin_credentials WHERE user_id=$1', [actor.userId]),
+    );
+    if (!credential?.enabledAt) {
+      if (!b.newWechatCode) {
+        fail(403, 'PIN_REQUIRED', '请重新验证微信身份');
+      }
+      const identity = await auth.wechat(b.newWechatCode!);
+      const own = await connection(s, (db) =>
+        maybe(db, 'SELECT user_id FROM auth_identities WHERE app_id=$1 AND subject=$2', [
+          identity.appId,
+          identity.subject,
+        ]),
+      );
+      if (own?.userId !== actor.userId) {
+        fail(403, 'FORBIDDEN', '微信身份不匹配');
+      }
+    }
+    const token = secret();
+    const result = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [actor.userId]);
+      if (actor.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [actor.familyId]);
+      }
+      await auth.recheck(db, actor, { account: true });
+      if (credential?.enabledAt && (!b.pin || !(await auth.verifyPin(db, actor.userId, b.pin)))) {
+        return { pinFailed: true };
+      }
+      await db.query(
+        "INSERT INTO step_up_grants(token_hash,session_id,action,expires_at) VALUES($1,$2,$3,now()+interval '5 minutes')",
+        [digest(token), actor.sessionId, b.action],
+      );
+      return { stepUpToken: token, expiresAt: new Date(Date.now() + 300000).toISOString() };
+    });
+    if ((result as any).pinFailed) {
+      fail(403, 'PIN_INVALID', '密码不正确');
+    }
+    return ok(request, result);
+  });
 }
 
-export async function runIdentityJobs(s:Services){await connection(s,async db=>{await db.query('DELETE FROM auth_attempts WHERE expires_at<=now()');await db.query('DELETE FROM step_up_grants WHERE expires_at<=now()');await db.query(`UPDATE pin_credentials SET pending_pin_hash=NULL,pending_recovery_hash=NULL,enrollment_id=NULL,enrollment_expires_at=NULL WHERE enrollment_expires_at<=now()`);await db.query(`DELETE FROM auth_rate_limits WHERE window_start<now()-interval '1 day' AND (blocked_until IS NULL OR blocked_until<now())`);});}
+export async function runIdentityJobs(s: Services) {
+  await connection(s, async (db) => {
+    await db.query('DELETE FROM auth_attempts WHERE expires_at<=now()');
+    await db.query('DELETE FROM step_up_grants WHERE expires_at<=now()');
+    await db.query(
+      `UPDATE pin_credentials SET pending_pin_hash=NULL,pending_recovery_hash=NULL,enrollment_id=NULL,enrollment_expires_at=NULL WHERE enrollment_expires_at<=now()`,
+    );
+    await db.query(
+      `DELETE FROM auth_rate_limits WHERE window_start<now()-interval '1 day' AND (blocked_until IS NULL OR blocked_until<now())`,
+    );
+  });
+}

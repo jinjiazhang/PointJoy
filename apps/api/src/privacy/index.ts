@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, open, readFile, unlink, stat } from 'node:fs/promises';
+import { mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
@@ -9,64 +9,877 @@ import type { Actor, Db, Services } from '../common/index.js';
 import { digest, secret, fail, connection, transaction, publicProfile } from '../identity/index.js';
 import { getArchiveBlockers, childView } from '../family/index.js';
 import { paging } from '../domain/support.js';
-import { exportFamilyDomain, exportSubjectDomain, deleteFamilyDomain, anonymizeSubjectDomain } from '../domain/lifecycle.js';
-const uuid=z.string().uuid();
-export function privacyView(p:any){return{id:p.id,type:p.type,scope:p.scope,familyId:p.familyId,status:p.status,requestedAt:p.requestedAt,dueAt:p.dueAt,assignedAt:p.assignedAt,completedAt:p.completedAt,userVisibleNote:p.userVisibleNote,supportContact:p.supportContact,outcomeCode:p.outcomeCode,exportExpiresAt:p.exportExpiresAt,version:p.version,downloadAvailable:p.type==='EXPORT'&&p.status==='COMPLETED'&&!!p.exportObjectKey&&new Date(p.exportExpiresAt).getTime()>Date.now()};}
-async function authorizeRequest(s:Services,db:Db,actor:Actor,p:any,download=false){await s.auth.recheck(db,actor,{account:true,allowArchived:true});if(p.scope==='FAMILY'){
- if(download&&p.userId!==actor.userId)fail(404,'RESOURCE_NOT_FOUND','申请不存在或无权访问');
- if(p.familyId){await s.auth.recheck(db,actor,{familyId:p.familyId,owner:true,allowArchived:true});return;}
- if(p.userId===actor.userId&&!download)return;
- }else if(p.userId===actor.userId)return;
- fail(404,'RESOURCE_NOT_FOUND','申请不存在或无权访问');}
-function exportPath(s:Services,key:string){if(!/^[a-f0-9-]+\.zip$/.test(key))throw new Error('UNSAFE_EXPORT_KEY');return join(s.config.exportDir,key);}
-export async function registerPrivacy(app:FastifyInstance,s:Services){
- await mkdir(s.config.exportDir,{recursive:true,mode:0o700});
- app.get('/me/privacy-requests',async request=>{const actor=await s.auth.require(request,{account:true,allowArchived:true});return connection(s,async db=>{const p=paging(request.query,{userId:actor.userId,type:'PRIVACY_REQUESTS'}),args:any[]=[actor.userId];let after='';if(p.after){args.push(p.after.createdAt,p.after.id);after=` AND (p.requested_at,p.id)<($2::timestamptz,$3::uuid)`;}args.push(p.limit+1);const data=await rows(db,`SELECT p.*,p.requested_at AS created_at FROM privacy_requests p WHERE p.user_id=$1 AND (p.scope<>'FAMILY' OR p.family_id IS NULL OR EXISTS(SELECT 1 FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE f.id=p.family_id AND g.user_id=$1 AND g.status='ACTIVE' AND f.status<>'DELETING'))${after} ORDER BY p.requested_at DESC,p.id DESC LIMIT $${args.length}`,args);const result=p.result(data);return ok(request,{...result,items:result.items.map(privacyView)});});});
- for(const scope of ['SELF_ACCOUNT','FAMILY'] as const){const family=scope==='FAMILY';app.post(family?'/families/:f/privacy-requests':'/me/privacy-requests',async request=>{const familyId=family?uuid.parse((request.params as any).f):undefined;const b=z.object({type:z.enum(['EXPORT','DELETE']),scope:z.literal(scope),confirmation:z.object({confirmed:z.literal(true),familyName:z.string().optional(),deleteNonzeroBalancesConfirmed:z.boolean().optional(),deleteOwnChildSensitiveDataConfirmed:z.boolean().optional()}).strict(),stepUpToken:z.string().min(20)}).strict().parse(request.body);return s.mutate(request,{account:true,familyId,owner:family,allowArchived:true,allowArchivedWrite:true,exclusiveFamily:family,exclusiveUser:!family,status:202},async(db:Db,actor:Actor)=>{
-   await s.auth.consumeStepUp(db,actor,b.stepUpToken,`${b.type}_${family?'FAMILY':'SELF'}`);
-   let needsAction=false,note='已收到申请，正在安排处理。';
-   if(b.type==='DELETE'&&family){const f=await one(db,'SELECT * FROM families WHERE id=$1',[familyId]);if(f.status!=='ARCHIVED')fail(409,'ARCHIVE_REQUIRED','请先归档家庭再申请删除');if(b.confirmation.familyName!==f.name||!b.confirmation.deleteNonzeroBalancesConfirmed)fail(400,'CONFIRMATION_REQUIRED','请确认家庭名称与包括非零积分在内的删除范围');const blockers=await getArchiveBlockers(db,familyId!);if(!blockers.canArchive)fail(409,'ARCHIVE_BLOCKED','家庭仍有待处理事项',blockers);note='将删除家庭资料、孩子文本照片、计划、奖励、积分及订单；仅保留最少处理回执。';}
-   if(b.type==='DELETE'&&!family){if(!b.confirmation.deleteOwnChildSensitiveDataConfirmed)fail(400,'CONFIRMATION_REQUIRED','请确认本人孩子敏感文本和照片清理范围，共同账务将去标识化保留');const owned=await rows(db,`SELECT f.id,f.name FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE g.user_id=$1 AND g.status='ACTIVE'`,[actor.userId]);if(owned.length){needsAction=true;note='需要逐个转让负责的家庭，或先归档并完成家庭在线数据删除。仅归档不能删除负责人账号。';}else note='将撤销全部会话、删除微信身份和账号头像，解绑本人孩子关系，清理本人孩子敏感文本照片；其他成员共同业务事实去标识化保留。';}
-   const old=await maybe(db,`SELECT id FROM privacy_requests WHERE user_id=$1 AND type=$2 AND scope=$3 AND family_id IS NOT DISTINCT FROM $4::uuid AND status IN ('RECEIVED','VERIFYING','PROCESSING','NEEDS_ACTION')`,[actor.userId,b.type,scope,familyId??null]);if(old)fail(409,'APPLICATION_PENDING','已有同范围申请正在处理',{requestId:old.id});
-   const receiptToken=secret();const p=await one(db,`INSERT INTO privacy_requests(user_id,family_id,type,scope,status,confirmation,user_visible_note,support_contact,due_at,receipt_token_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+$9*interval '1 day',$10) RETURNING *`,[actor.userId,familyId??null,b.type,scope,needsAction?'NEEDS_ACTION':'RECEIVED',JSON.stringify(b.confirmation),note,s.config.supportContact,b.type==='EXPORT'?3:7,digest(receiptToken)]);await audit(db,actor,'PRIVACY_REQUESTED',{familyId,sourceId:p.id,details:{type:b.type,scope}});return{...privacyView(p),receiptToken};
-  });});}
- app.get('/privacy-receipts/:token',async request=>{const token=z.string().min(40).max(100).parse((request.params as any).token);return connection(s,async db=>{const p=await maybe(db,'SELECT * FROM privacy_requests WHERE receipt_token_hash=$1',[digest(token)]);if(!p)fail(404,'RESOURCE_NOT_FOUND','回执不存在或已过保留期限');const marker=await maybe(db,'SELECT deleted_at,backup_purge_due_at,completed_at FROM deletion_tombstones WHERE request_id=$1 ORDER BY deleted_at LIMIT 1',[p.id]);return ok(request,{requestId:p.id,type:p.type,scope:p.scope,status:p.status,requestedAt:p.requestedAt,dueAt:p.dueAt,onlineCompletedAt:p.completedAt,userVisibleNote:p.userVisibleNote,supportContact:p.supportContact,onlineDataStatus:p.outcomeCode==='ONLINE_DELETION_COMPLETED'?'COMPLETED':p.status,backupStatus:marker?marker.completedAt?'COMPLETED':'PENDING':'NOT_STARTED',backupPurgeDueAt:marker?.backupPurgeDueAt,backupCompletedAt:marker?.completedAt});});});
- app.get('/privacy-requests/:requestId',async request=>{const actor=await s.auth.require(request,{account:true,allowArchived:true});return connection(s,async db=>{const p=await one(db,'SELECT * FROM privacy_requests WHERE id=$1',[uuid.parse((request.params as any).requestId)]);await authorizeRequest(s,db,actor,p);return ok(request,privacyView(p));});});
- app.post('/privacy-requests/:requestId/download-grant',async request=>{const actor=await s.auth.require(request,{account:true,allowArchived:true});return connection(s,async db=>{const p=await one(db,'SELECT * FROM privacy_requests WHERE id=$1',[uuid.parse((request.params as any).requestId)]);await authorizeRequest(s,db,actor,p,true);if(p.type!=='EXPORT'||p.status!=='COMPLETED')fail(409,'EXPORT_NOT_READY','导出文件尚未完成');if(!p.exportObjectKey||new Date(p.exportExpiresAt).getTime()<=Date.now())fail(410,'EXPORT_EXPIRED','导出文件已过期，请重新申请');const token=secret();await db.query(`INSERT INTO export_read_grants(token_hash,request_id,session_id,expires_at) VALUES($1,$2,$3,now()+interval '60 seconds')`,[digest(token),p.id,actor.sessionId]);return ok(request,{downloadUrl:`${s.config.apiBaseUrl}/privacy-downloads/${token}`,expiresAt:new Date(Date.now()+60000).toISOString()});});});
- app.get('/privacy-downloads/:grant',async(request,reply)=>{const p=await connection(s,async db=>{const grant=await one(db,'SELECT * FROM export_read_grants WHERE token_hash=$1 AND expires_at>now()',[digest(z.string().min(30).max(100).parse((request.params as any).grant))]);const session=await one(db,'SELECT * FROM auth_sessions WHERE id=$1',[grant.sessionId]);const p=await one(db,'SELECT * FROM privacy_requests WHERE id=$1',[grant.requestId]);await authorizeRequest(s,db,s.auth.actor(session),p,true);if(!p.exportObjectKey||p.status!=='COMPLETED'||new Date(p.exportExpiresAt).getTime()<=Date.now())fail(410,'EXPORT_EXPIRED','导出文件已清理');return p;});return reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff').header('Content-Disposition',`attachment; filename="pointjoy-${p.id}.zip"`).type('application/zip').send(createReadStream(exportPath(s,p.exportObjectKey)));});
- app.post('/support/pin-recovery-requests',async request=>{const b=z.object({description:z.string().trim().min(5).max(500),contactChannel:z.string().trim().min(3).max(200).optional()}).strict().parse(request.body);const actor=await s.auth.require(request,{profile:false,allowLocked:true,account:true});if(actor.mode!=='LOCKED')fail(409,'INVALID_STATE','请从锁定页面发起账号支持');const p=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[actor.userId]);await s.auth.recheck(db,actor,{profile:false,allowLocked:true,account:true});const existing=await maybe(db,`SELECT * FROM privacy_requests WHERE user_id=$1 AND type='PIN_RECOVERY' AND status IN ('RECEIVED','VERIFYING','NEEDS_ACTION')`,[actor.userId]);if(existing)return existing;return one(db,`INSERT INTO privacy_requests(user_id,type,scope,status,confirmation,user_visible_note,support_contact,due_at) VALUES($1,'PIN_RECOVERY','PIN_SUPPORT','RECEIVED',$2,$3,$4,now()+interval '3 days') RETURNING *`,[actor.userId,JSON.stringify(b),'已收到账号支持申请。一个工作日内受理，需独立证据审核；不会因等待或重新微信登录自动重置。',s.config.supportContact]);});return ok(request,privacyView(p),202);});
- app.get('/support/pin-recovery-requests',async request=>{const actor=await s.auth.require(request,{profile:false,allowLocked:true,account:true});return connection(s,async db=>ok(request,list((await rows(db,`SELECT * FROM privacy_requests WHERE user_id=$1 AND type='PIN_RECOVERY' ORDER BY requested_at DESC LIMIT 30`,[actor.userId])).map(privacyView))));});
+import {
+  exportFamilyDomain,
+  exportSubjectDomain,
+  deleteFamilyDomain,
+  anonymizeSubjectDomain,
+} from '../domain/lifecycle.js';
+const uuid = z.string().uuid();
+export function privacyView(p: any) {
+  return {
+    id: p.id,
+    type: p.type,
+    scope: p.scope,
+    familyId: p.familyId,
+    status: p.status,
+    requestedAt: p.requestedAt,
+    dueAt: p.dueAt,
+    assignedAt: p.assignedAt,
+    completedAt: p.completedAt,
+    userVisibleNote: p.userVisibleNote,
+    supportContact: p.supportContact,
+    outcomeCode: p.outcomeCode,
+    exportExpiresAt: p.exportExpiresAt,
+    version: p.version,
+    downloadAvailable:
+      p.type === 'EXPORT' &&
+      p.status === 'COMPLETED' &&
+      !!p.exportObjectKey &&
+      new Date(p.exportExpiresAt).getTime() > Date.now(),
+  };
 }
-const crcTable=Array.from({length:256},(_,n)=>{for(let k=0;k<8;k++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
-function crc32(data:Buffer){let c=0xffffffff;for(const byte of data)c=crcTable[(c^byte)&255]^(c>>>8);return(c^0xffffffff)>>>0;}
-async function writeZip(path:string,entries:{name:string,data:Buffer}[]){const f=await open(path,'wx',0o600);let offset=0;const directory:Buffer[]=[];try{for(const entry of entries){const name=Buffer.from(entry.name),crc=crc32(entry.data),size=entry.data.length;const local=Buffer.alloc(30);local.writeUInt32LE(0x04034b50);local.writeUInt16LE(20,4);local.writeUInt16LE(0x800,6);local.writeUInt32LE(crc,14);local.writeUInt32LE(size,18);local.writeUInt32LE(size,22);local.writeUInt16LE(name.length,26);await f.write(local);await f.write(name);await f.write(entry.data);const central=Buffer.alloc(46);central.writeUInt32LE(0x02014b50);central.writeUInt16LE(20,4);central.writeUInt16LE(20,6);central.writeUInt16LE(0x800,8);central.writeUInt32LE(crc,16);central.writeUInt32LE(size,20);central.writeUInt32LE(size,24);central.writeUInt16LE(name.length,28);central.writeUInt32LE(offset,42);directory.push(Buffer.concat([central,name]));offset+=local.length+name.length+size;}const start=offset;for(const d of directory){await f.write(d);offset+=d.length;}const end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(offset-start,12);end.writeUInt32LE(start,16);await f.write(end);await f.sync();}finally{await f.close();}}
-function csv(items:any[]){if(!items.length)return'';const keys=[...new Set(items.flatMap(x=>Object.keys(x)))];const value=(v:any)=>{let text=v==null?'':typeof v==='object'?JSON.stringify(v):String(v);if(/^[=+@\-\t\r]/.test(text))text="'"+text;return '"'+text.replace(/"/g,'""')+'"';};return'\uFEFF'+[keys.map(value).join(','),...items.map(x=>keys.map(k=>value(x[k])).join(','))].join('\r\n');}
-async function exportPermitted(db:Db,p:any){
- const user=await one(db,`SELECT id FROM users WHERE id=$1 AND status='ACTIVE'`,[p.userId]);
- if(p.familyId){const family=await one(db,`SELECT f.* FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE f.id=$1 AND g.user_id=$2 AND g.status='ACTIVE' AND f.status<>'DELETING'`,[p.familyId,p.userId]);const deleting=await maybe(db,`SELECT 1 FROM privacy_requests pr WHERE pr.type='DELETE' AND pr.status='PROCESSING' AND (pr.family_id=$1 OR pr.scope='SELF_ACCOUNT' AND EXISTS(SELECT 1 FROM family_principals fp WHERE fp.family_id=$1 AND fp.user_id=pr.user_id))`,[p.familyId]);if(deleting)fail(409,'PRIVACY_SCOPE_PROCESSING','相关资料正在删除，完成后重新生成导出');return family.version;}return null;
+async function authorizeRequest(s: Services, db: Db, actor: Actor, p: any, download = false) {
+  await s.auth.recheck(db, actor, { account: true, allowArchived: true });
+  if (p.scope === 'FAMILY') {
+    if (download && p.userId !== actor.userId) {
+      fail(404, 'RESOURCE_NOT_FOUND', '申请不存在或无权访问');
+    }
+    if (p.familyId) {
+      await s.auth.recheck(db, actor, { familyId: p.familyId, owner: true, allowArchived: true });
+      return;
+    }
+    if (p.userId === actor.userId && !download) {
+      return;
+    }
+  } else if (p.userId === actor.userId) {
+    return;
+  }
+  fail(404, 'RESOURCE_NOT_FOUND', '申请不存在或无权访问');
 }
-async function createExport(s:Services,p:any){const data=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[p.userId]);if(p.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[p.familyId]);const user=await one(db,`SELECT * FROM users WHERE id=$1 AND status='ACTIVE'`,[p.userId]);const familyVersion=await exportPermitted(db,p);let tables:any;let media:any[];
- if(p.scope==='FAMILY'){const family=await one(db,`SELECT f.* FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE f.id=$1 AND g.user_id=$2 AND g.status='ACTIVE' AND f.status<>'DELETING'`,[p.familyId,p.userId]);tables={family:[family],children:(await rows(db,'SELECT * FROM child_profiles WHERE family_id=$1',[p.familyId])).map(c=>childView(c)),guardians:await rows(db,`SELECT g.id,g.status,g.joined_at,u.display_name FROM guardian_memberships g JOIN users u ON u.id=g.user_id WHERE g.family_id=$1`,[p.familyId]),...await exportFamilyDomain(db,p.familyId),auditLogs:await rows(db,'SELECT id,child_id,action,source_id,details,created_at FROM audit_logs WHERE family_id=$1',[p.familyId])};media=await rows(db,`SELECT DISTINCT m.id,m.object_key FROM media_assets m JOIN submission_media sm ON sm.media_id=m.id WHERE m.family_id=$1 AND m.status='READY' AND m.retention_until>now()`,[p.familyId]);
- }else{tables={profile:[publicProfile(user)],relationships:await rows(db,`SELECT p.kind,p.family_id,p.child_id,f.name AS family_name FROM family_principals p JOIN families f ON f.id=p.family_id WHERE p.user_id=$1`,[p.userId]),children:(await rows(db,'SELECT * FROM child_profiles WHERE bound_user_id=$1',[p.userId])).map(c=>childView(c,false)),...await exportSubjectDomain(db,p.userId)};media=await rows(db,`SELECT DISTINCT m.id,m.object_key FROM media_assets m JOIN child_profiles c ON c.id=m.child_id JOIN submission_media sm ON sm.media_id=m.id WHERE c.bound_user_id=$1 AND m.status='READY' AND m.retention_until>now()`,[p.userId]);}return{tables,media,familyVersion};});
- const entries:{name:string,data:Buffer}[]=[],counts:Record<string,number>={};for(const[key,table]of Object.entries(data.tables)){const items=table as any[];counts[key]=items.length;entries.push({name:`data/${key}.json`,data:Buffer.from(JSON.stringify(items,null,2))},{name:`data/${key}.csv`,data:Buffer.from(csv(items))});}
- for(const m of data.media){if(!/^[a-z]+\/[a-zA-Z0-9.-]+$/.test(m.objectKey))throw new Error('UNSAFE_MEDIA_KEY');try{entries.push({name:`photos/${m.id}.jpg`,data:await readFile(join(s.config.mediaDir,m.objectKey))});}catch(error:any){if(error.code!=='ENOENT')throw error;}}
- const manifest={schemaVersion:'1.0',generatedAt:new Date().toISOString(),timezone:'Asia/Shanghai',scope:p.scope,recordCounts:counts,files:entries.map(e=>({path:e.name,sizeBytes:e.data.length,sha256:createHash('sha256').update(e.data).digest('hex')}))};entries.push({name:'manifest.json',data:Buffer.from(JSON.stringify(manifest,null,2))});const key=`${randomUUID()}.zip`;await writeZip(exportPath(s,key),entries);try{await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[p.userId]);if(p.familyId)await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE',[p.familyId]);const currentVersion=await exportPermitted(db,p);if(currentVersion!==data.familyVersion)fail(409,'PRIVACY_SCOPE_CHANGED','资料删除范围已改变，将重新生成导出');const current=await one(db,'SELECT * FROM privacy_requests WHERE id=$1 FOR UPDATE',[p.id]);if(current.status!=='PROCESSING'){await unlink(exportPath(s,key)).catch(()=>{});return;}await db.query(`UPDATE privacy_requests SET status='COMPLETED',export_object_key=$2,export_expires_at=now()+interval '7 days',completed_at=now(),lease_until=NULL,user_visible_note='导出已完成，文件保留7天；下载时仍会核验当前权限。',version=version+1 WHERE id=$1`,[p.id,key]);});}catch(error){await unlink(exportPath(s,key)).catch(()=>{});throw error;}
+function exportPath(s: Services, key: string) {
+  if (!/^[a-f0-9-]+\.zip$/.test(key)) {
+    throw new Error('UNSAFE_EXPORT_KEY');
+  }
+  return join(s.config.exportDir, key);
 }
-async function removeFiles(s:Services,media:any[],exports:any[]){for(const m of media){for(const key of[m.objectKey,m.originalObjectKey].filter(Boolean)){const referenced=await connection(s,db=>maybe(db,`SELECT id FROM media_assets WHERE object_key=$1 AND status NOT IN ('DELETING','DELETED')`,[key]));if(!referenced&&/^[a-z]+\/[a-zA-Z0-9.-]+$/.test(key))await unlink(join(s.config.mediaDir,key)).catch((e:any)=>{if(e.code!=='ENOENT')throw e;});}}for(const e of exports)if(e.exportObjectKey)await unlink(exportPath(s,e.exportObjectKey)).catch((x:any)=>{if(x.code!=='ENOENT')throw x;});}
-async function deleteFamily(s:Services,p:any){const selected=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[p.userId]);const f=await one(db,'SELECT * FROM families WHERE id=$1 FOR UPDATE',[p.familyId]);const owner=await one(db,'SELECT * FROM guardian_memberships WHERE id=$1',[f.ownerMembershipId]);if(owner.userId!==p.userId||!['ARCHIVED','DELETING'].includes(f.status))fail(409,'DELETE_SCOPE_CHANGED','家庭删除授权状态已改变');if(!(await getArchiveBlockers(db,p.familyId)).canArchive)fail(409,'ARCHIVE_BLOCKED','家庭仍有待处理事项');await db.query(`UPDATE families SET status='DELETING' WHERE id=$1`,[p.familyId]);await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE family_id=$1',[p.familyId]);const media=await rows(db,`UPDATE media_assets SET status='DELETING' WHERE family_id=$1 RETURNING *`,[p.familyId]);const exports=await rows(db,'SELECT * FROM privacy_requests WHERE family_id=$1 AND export_object_key IS NOT NULL',[p.familyId]);await queueProtection(db,'FAMILY_DELETED',{familyId:p.familyId,requestId:p.id});return{media,exports};});
- await removeFiles(s,selected.media,selected.exports);
- await transaction(s,async db=>{await db.query('SELECT id FROM families WHERE id=$1 FOR UPDATE',[p.familyId]);await deleteFamilyDomain(db,p.familyId);await db.query('DELETE FROM media_read_grants WHERE media_id IN (SELECT id FROM media_assets WHERE family_id=$1)',[p.familyId]);await db.query('DELETE FROM media_jobs WHERE media_id IN (SELECT id FROM media_assets WHERE family_id=$1)',[p.familyId]);await db.query('DELETE FROM family_principals WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM child_binding_applications WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM child_binding_invitations WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM join_applications WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM invitations WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM child_profiles WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM media_assets WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM child_drafts WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM audit_logs WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM operation_records WHERE actor_scope LIKE $1 OR path LIKE $2 OR response::text LIKE $3',[`%:${p.familyId}:%`,`%/families/${p.familyId}%`,`%${p.familyId}%`]);await db.query('UPDATE privacy_requests SET family_id=NULL,export_object_key=NULL,export_expires_at=NULL,confirmation=NULL WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM guardian_memberships WHERE family_id=$1',[p.familyId]);await db.query('DELETE FROM families WHERE id=$1',[p.familyId]);await db.query(`INSERT INTO deletion_tombstones(request_id,family_id_hash,backup_purge_due_at,clear_after) VALUES($1,$2,now()+interval '35 days',now()+interval '65 days')`,[p.id,digest(p.familyId)]);await db.query(`UPDATE privacy_requests SET status='COMPLETED',completed_at=now(),lease_until=NULL,user_visible_note='家庭在线资料、文本照片、计划奖励、账本订单及导出副本已删除。备份最多35天轮换清理。',outcome_code='ONLINE_DELETION_COMPLETED',version=version+1 WHERE id=$1`,[p.id]);});
+export async function registerPrivacy(app: FastifyInstance, s: Services) {
+  await mkdir(s.config.exportDir, { recursive: true, mode: 0o700 });
+  app.get('/me/privacy-requests', async (request) => {
+    const actor = await s.auth.require(request, { account: true, allowArchived: true });
+    return connection(s, async (db) => {
+      const p = paging(request.query, { userId: actor.userId, type: 'PRIVACY_REQUESTS' });
+      const args: any[] = [actor.userId];
+      let after = '';
+      if (p.after) {
+        args.push(p.after.createdAt, p.after.id);
+        after = ` AND (p.requested_at,p.id)<($2::timestamptz,$3::uuid)`;
+      }
+      args.push(p.limit + 1);
+      const data = await rows(
+        db,
+        `SELECT p.*,p.requested_at AS created_at FROM privacy_requests p WHERE p.user_id=$1 AND (p.scope<>'FAMILY' OR p.family_id IS NULL OR EXISTS(SELECT 1 FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE f.id=p.family_id AND g.user_id=$1 AND g.status='ACTIVE' AND f.status<>'DELETING'))${after} ORDER BY p.requested_at DESC,p.id DESC LIMIT $${args.length}`,
+        args,
+      );
+      const result = p.result(data);
+      return ok(request, { ...result, items: result.items.map(privacyView) });
+    });
+  });
+  for (const scope of ['SELF_ACCOUNT', 'FAMILY'] as const) {
+    const family = scope === 'FAMILY';
+    app.post(family ? '/families/:f/privacy-requests' : '/me/privacy-requests', async (request) => {
+      const familyId = family ? uuid.parse((request.params as any).f) : undefined;
+      const b = z
+        .object({
+          type: z.enum(['EXPORT', 'DELETE']),
+          scope: z.literal(scope),
+          confirmation: z
+            .object({
+              confirmed: z.literal(true),
+              familyName: z.string().optional(),
+              deleteNonzeroBalancesConfirmed: z.boolean().optional(),
+              deleteOwnChildSensitiveDataConfirmed: z.boolean().optional(),
+            })
+            .strict(),
+          stepUpToken: z.string().min(20),
+        })
+        .strict()
+        .parse(request.body);
+      return s.mutate(
+        request,
+        {
+          account: true,
+          familyId,
+          owner: family,
+          allowArchived: true,
+          allowArchivedWrite: true,
+          exclusiveFamily: family,
+          exclusiveUser: !family,
+          status: 202,
+        },
+        async (db: Db, actor: Actor) => {
+          await s.auth.consumeStepUp(
+            db,
+            actor,
+            b.stepUpToken,
+            `${b.type}_${family ? 'FAMILY' : 'SELF'}`,
+          );
+          let needsAction = false;
+          let note = '已收到申请，正在安排处理。';
+          if (b.type === 'DELETE' && family) {
+            const f = await one(db, 'SELECT * FROM families WHERE id=$1', [familyId]);
+            if (f.status !== 'ARCHIVED') {
+              fail(409, 'ARCHIVE_REQUIRED', '请先归档家庭再申请删除');
+            }
+            if (
+              b.confirmation.familyName !== f.name ||
+              !b.confirmation.deleteNonzeroBalancesConfirmed
+            ) {
+              fail(400, 'CONFIRMATION_REQUIRED', '请确认家庭名称与包括非零积分在内的删除范围');
+            }
+            const blockers = await getArchiveBlockers(db, familyId!);
+            if (!blockers.canArchive) {
+              fail(409, 'ARCHIVE_BLOCKED', '家庭仍有待处理事项', blockers);
+            }
+            note = '将删除家庭资料、孩子文本照片、计划、奖励、积分及订单；仅保留最少处理回执。';
+          }
+          if (b.type === 'DELETE' && !family) {
+            if (!b.confirmation.deleteOwnChildSensitiveDataConfirmed) {
+              fail(
+                400,
+                'CONFIRMATION_REQUIRED',
+                '请确认本人孩子敏感文本和照片清理范围，共同账务将去标识化保留',
+              );
+            }
+            const owned = await rows(
+              db,
+              `SELECT f.id,f.name FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE g.user_id=$1 AND g.status='ACTIVE'`,
+              [actor.userId],
+            );
+            if (owned.length) {
+              needsAction = true;
+              note =
+                '需要逐个转让负责的家庭，或先归档并完成家庭在线数据删除。仅归档不能删除负责人账号。';
+            } else {
+              note =
+                '将撤销全部会话、删除微信身份和账号头像，解绑本人孩子关系，清理本人孩子敏感文本照片；其他成员共同业务事实去标识化保留。';
+            }
+          }
+          const old = await maybe(
+            db,
+            `SELECT id FROM privacy_requests WHERE user_id=$1 AND type=$2 AND scope=$3 AND family_id IS NOT DISTINCT FROM $4::uuid AND status IN ('RECEIVED','VERIFYING','PROCESSING','NEEDS_ACTION')`,
+            [actor.userId, b.type, scope, familyId ?? null],
+          );
+          if (old) {
+            fail(409, 'APPLICATION_PENDING', '已有同范围申请正在处理', { requestId: old.id });
+          }
+          const receiptToken = secret();
+          const p = await one(
+            db,
+            `INSERT INTO privacy_requests(user_id,family_id,type,scope,status,confirmation,user_visible_note,support_contact,due_at,receipt_token_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+$9*interval '1 day',$10) RETURNING *`,
+            [
+              actor.userId,
+              familyId ?? null,
+              b.type,
+              scope,
+              needsAction ? 'NEEDS_ACTION' : 'RECEIVED',
+              JSON.stringify(b.confirmation),
+              note,
+              s.config.supportContact,
+              b.type === 'EXPORT' ? 3 : 7,
+              digest(receiptToken),
+            ],
+          );
+          await audit(db, actor, 'PRIVACY_REQUESTED', {
+            familyId,
+            sourceId: p.id,
+            details: { type: b.type, scope },
+          });
+          return { ...privacyView(p), receiptToken };
+        },
+      );
+    });
+  }
+  app.get('/privacy-receipts/:token', async (request) => {
+    const token = z
+      .string()
+      .min(40)
+      .max(100)
+      .parse((request.params as any).token);
+    return connection(s, async (db) => {
+      const p = await maybe(db, 'SELECT * FROM privacy_requests WHERE receipt_token_hash=$1', [
+        digest(token),
+      ]);
+      if (!p) {
+        fail(404, 'RESOURCE_NOT_FOUND', '回执不存在或已过保留期限');
+      }
+      const marker = await maybe(
+        db,
+        'SELECT deleted_at,backup_purge_due_at,completed_at FROM deletion_tombstones WHERE request_id=$1 ORDER BY deleted_at LIMIT 1',
+        [p.id],
+      );
+      return ok(request, {
+        requestId: p.id,
+        type: p.type,
+        scope: p.scope,
+        status: p.status,
+        requestedAt: p.requestedAt,
+        dueAt: p.dueAt,
+        onlineCompletedAt: p.completedAt,
+        userVisibleNote: p.userVisibleNote,
+        supportContact: p.supportContact,
+        onlineDataStatus: p.outcomeCode === 'ONLINE_DELETION_COMPLETED' ? 'COMPLETED' : p.status,
+        backupStatus: marker ? (marker.completedAt ? 'COMPLETED' : 'PENDING') : 'NOT_STARTED',
+        backupPurgeDueAt: marker?.backupPurgeDueAt,
+        backupCompletedAt: marker?.completedAt,
+      });
+    });
+  });
+  app.get('/privacy-requests/:requestId', async (request) => {
+    const actor = await s.auth.require(request, { account: true, allowArchived: true });
+    return connection(s, async (db) => {
+      const p = await one(db, 'SELECT * FROM privacy_requests WHERE id=$1', [
+        uuid.parse((request.params as any).requestId),
+      ]);
+      await authorizeRequest(s, db, actor, p);
+      return ok(request, privacyView(p));
+    });
+  });
+  app.post('/privacy-requests/:requestId/download-grant', async (request) => {
+    const actor = await s.auth.require(request, { account: true, allowArchived: true });
+    return connection(s, async (db) => {
+      const p = await one(db, 'SELECT * FROM privacy_requests WHERE id=$1', [
+        uuid.parse((request.params as any).requestId),
+      ]);
+      await authorizeRequest(s, db, actor, p, true);
+      if (p.type !== 'EXPORT' || p.status !== 'COMPLETED') {
+        fail(409, 'EXPORT_NOT_READY', '导出文件尚未完成');
+      }
+      if (!p.exportObjectKey || new Date(p.exportExpiresAt).getTime() <= Date.now()) {
+        fail(410, 'EXPORT_EXPIRED', '导出文件已过期，请重新申请');
+      }
+      const token = secret();
+      await db.query(
+        `INSERT INTO export_read_grants(token_hash,request_id,session_id,expires_at) VALUES($1,$2,$3,now()+interval '60 seconds')`,
+        [digest(token), p.id, actor.sessionId],
+      );
+      return ok(request, {
+        downloadUrl: `${s.config.apiBaseUrl}/privacy-downloads/${token}`,
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      });
+    });
+  });
+  app.get('/privacy-downloads/:grant', async (request, reply) => {
+    const p = await connection(s, async (db) => {
+      const grant = await one(
+        db,
+        'SELECT * FROM export_read_grants WHERE token_hash=$1 AND expires_at>now()',
+        [
+          digest(
+            z
+              .string()
+              .min(30)
+              .max(100)
+              .parse((request.params as any).grant),
+          ),
+        ],
+      );
+      const session = await one(db, 'SELECT * FROM auth_sessions WHERE id=$1', [grant.sessionId]);
+      const p = await one(db, 'SELECT * FROM privacy_requests WHERE id=$1', [grant.requestId]);
+      await authorizeRequest(s, db, s.auth.actor(session), p, true);
+      if (
+        !p.exportObjectKey ||
+        p.status !== 'COMPLETED' ||
+        new Date(p.exportExpiresAt).getTime() <= Date.now()
+      ) {
+        fail(410, 'EXPORT_EXPIRED', '导出文件已清理');
+      }
+      return p;
+    });
+    return reply
+      .header('Cache-Control', 'private, no-store')
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Disposition', `attachment; filename="pointjoy-${p.id}.zip"`)
+      .type('application/zip')
+      .send(createReadStream(exportPath(s, p.exportObjectKey)));
+  });
+  app.post('/support/pin-recovery-requests', async (request) => {
+    const b = z
+      .object({
+        description: z.string().trim().min(5).max(500),
+        contactChannel: z.string().trim().min(3).max(200).optional(),
+      })
+      .strict()
+      .parse(request.body);
+    const actor = await s.auth.require(request, {
+      profile: false,
+      allowLocked: true,
+      account: true,
+    });
+    if (actor.mode !== 'LOCKED') {
+      fail(409, 'INVALID_STATE', '请从锁定页面发起账号支持');
+    }
+    const p = await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [actor.userId]);
+      await s.auth.recheck(db, actor, { profile: false, allowLocked: true, account: true });
+      const existing = await maybe(
+        db,
+        `SELECT * FROM privacy_requests WHERE user_id=$1 AND type='PIN_RECOVERY' AND status IN ('RECEIVED','VERIFYING','NEEDS_ACTION')`,
+        [actor.userId],
+      );
+      if (existing) {
+        return existing;
+      }
+      return one(
+        db,
+        `INSERT INTO privacy_requests(user_id,type,scope,status,confirmation,user_visible_note,support_contact,due_at) VALUES($1,'PIN_RECOVERY','PIN_SUPPORT','RECEIVED',$2,$3,$4,now()+interval '3 days') RETURNING *`,
+        [
+          actor.userId,
+          JSON.stringify(b),
+          '已收到账号支持申请。一个工作日内受理，需独立证据审核；不会因等待或重新微信登录自动重置。',
+          s.config.supportContact,
+        ],
+      );
+    });
+    return ok(request, privacyView(p), 202);
+  });
+  app.get('/support/pin-recovery-requests', async (request) => {
+    const actor = await s.auth.require(request, {
+      profile: false,
+      allowLocked: true,
+      account: true,
+    });
+    return connection(s, async (db) =>
+      ok(
+        request,
+        list(
+          (
+            await rows(
+              db,
+              `SELECT * FROM privacy_requests WHERE user_id=$1 AND type='PIN_RECOVERY' ORDER BY requested_at DESC LIMIT 30`,
+              [actor.userId],
+            )
+          ).map(privacyView),
+        ),
+      ),
+    );
+  });
 }
-async function deleteSubject(s:Services,p:any){const selected=await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[p.userId]);const owned=await maybe(db,`SELECT f.id FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE g.user_id=$1 AND g.status='ACTIVE'`,[p.userId]);if(owned){await db.query(`UPDATE privacy_requests SET status='NEEDS_ACTION',lease_until=NULL,user_visible_note='请先转让负责的家庭，或先归档并完成家庭在线数据删除；仅归档仍不满足条件。',version=version+1 WHERE id=$1`,[p.id]);return null;}
- const families=await rows(db,'SELECT family_id FROM family_principals WHERE user_id=$1 ORDER BY family_id',[p.userId]);for(const f of families){await db.query('SELECT id FROM families WHERE id=$1 FOR UPDATE',[f.familyId]);await db.query('UPDATE families SET version=version+1 WHERE id=$1',[f.familyId]);}await db.query(`UPDATE users SET status='DISABLED',security_version=security_version+1 WHERE id=$1`,[p.userId]);await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1',[p.userId]);const children=await rows(db,'SELECT id,family_id FROM child_profiles WHERE bound_user_id=$1',[p.userId]);const media=await rows(db,`UPDATE media_assets SET status='DELETING' WHERE (purpose='USER_AVATAR' AND uploader_user_id=$1) OR child_id=ANY($2::uuid[]) RETURNING *`,[p.userId,children.map(c=>c.id)]);const exports=await rows(db,'SELECT * FROM privacy_requests WHERE (user_id=$1 OR family_id=ANY($2::uuid[])) AND export_object_key IS NOT NULL',[p.userId,families.map(f=>f.familyId)]);await db.query('UPDATE privacy_requests SET export_object_key=NULL,export_expires_at=NULL WHERE (user_id=$1 OR family_id=ANY($2::uuid[])) AND type=\'EXPORT\'',[p.userId,families.map(f=>f.familyId)]);await queueProtection(db,'ACCOUNT_DELETED',{userId:p.userId,requestId:p.id,childIds:children.map(c=>c.id)});return{media,exports,children};});if(!selected)return;
- await removeFiles(s,selected.media,selected.exports);
- await transaction(s,async db=>{await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[p.userId]);const children=await rows(db,'SELECT id,family_id,avatar_media_id FROM child_profiles WHERE bound_user_id=$1 ORDER BY family_id,id',[p.userId]);for(const f of [...new Set(children.map(c=>c.familyId))])await db.query('SELECT id FROM families WHERE id=$1 FOR UPDATE',[f]);await anonymizeSubjectDomain(db,p.userId);
- for(const c of children){await db.query(`UPDATE child_profiles SET nickname='已删除孩子资料',bound_user_id=NULL,binding_version=binding_version+1,version=version+1,age_band=NULL WHERE id=$1`,[c.id]);await db.query('DELETE FROM completion_drafts WHERE child_id=$1',[c.id]);await db.query(`UPDATE completion_submissions SET note='' WHERE child_id=$1`,[c.id]);await db.query(`UPDATE completion_decisions SET reason=NULL WHERE occurrence_id IN (SELECT id FROM activity_occurrences WHERE child_id=$1)`,[c.id]);await db.query(`UPDATE point_ledger SET reason='已删除个人文本' WHERE child_id=$1`,[c.id]);await db.query(`UPDATE redemption_orders SET decision_reason=NULL,arrangement_note=NULL,fulfillment_note=NULL WHERE child_id=$1`,[c.id]);await db.query(`UPDATE audit_logs SET details='{}' WHERE child_id=$1`,[c.id]);await db.query(`UPDATE auth_sessions SET revoked_at=now() WHERE child_id=$1 AND child_session_source='DIRECT'`,[c.id]);}
- await db.query('DELETE FROM family_principals WHERE user_id=$1',[p.userId]);await db.query(`UPDATE guardian_memberships SET status='REMOVED',removed_at=now(),version=version+1 WHERE user_id=$1 AND status='ACTIVE'`,[p.userId]);await db.query('DELETE FROM auth_identities WHERE user_id=$1',[p.userId]);await db.query('DELETE FROM pin_credentials WHERE user_id=$1',[p.userId]);await db.query('DELETE FROM consent_records WHERE user_id=$1',[p.userId]);await db.query('DELETE FROM auth_attempts WHERE response_ciphertext IS NOT NULL AND expires_at<now()');await db.query('UPDATE users SET display_name=\'已删除账号\',avatar_media_id=NULL,profile_completed_at=NULL,version=version+1 WHERE id=$1',[p.userId]);await db.query('UPDATE media_assets SET status=\'DELETED\',object_key=NULL,original_object_key=NULL,upload_hash=NULL,source_media_id=NULL WHERE id=ANY($1::uuid[])',[selected.media.map(m=>m.id)]);await db.query('UPDATE audit_logs SET actor_user_id=NULL,details=\'{}\' WHERE actor_user_id=$1',[p.userId]);await db.query(`UPDATE join_applications SET applicant_profile_snapshot='{}',status=CASE WHEN status='PENDING' THEN 'WITHDRAWN' ELSE status END WHERE applicant_user_id=$1`,[p.userId]);await db.query(`UPDATE child_binding_applications SET applicant_profile_snapshot='{}',status=CASE WHEN status='PENDING' THEN 'WITHDRAWN' ELSE status END WHERE applicant_user_id=$1`,[p.userId]);await db.query(`UPDATE operation_records SET response='{"redacted":true,"reason":"PRIVACY_DELETION"}'::jsonb WHERE response::text LIKE ANY($1::text[]) OR path LIKE ANY($2::text[])`,[[`%${p.userId}%`,...children.map(c=>`%${c.id}%`) ],children.map(c=>`%${c.id}%`)]);await db.query('DELETE FROM operation_records WHERE actor_scope LIKE $1',[`${p.userId}:%`]);await db.query('UPDATE privacy_requests SET export_object_key=NULL,export_expires_at=NULL,confirmation=NULL WHERE user_id=$1',[p.userId]);await db.query(`INSERT INTO deletion_tombstones(request_id,subject_hash,backup_purge_due_at,clear_after) VALUES($1,$2,now()+interval '35 days',now()+interval '65 days')`,[p.id,digest(p.userId)]);await db.query(`UPDATE privacy_requests SET status='COMPLETED',completed_at=now(),lease_until=NULL,outcome_code='ONLINE_DELETION_COMPLETED',user_visible_note='账号身份、头像及本人孩子敏感文本照片已删除，共同业务事实已去除账号关联。备份最多35天轮换清理。',version=version+1 WHERE id=$1`,[p.id]);});
+const crcTable = Array.from({ length: 256 }, (_, n) => {
+  for (let k = 0; k < 8; k++) {
+    n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
+  }
+  return n >>> 0;
+});
+function crc32(data: Buffer) {
+  let c = 0xffffffff;
+  for (const byte of data) {
+    c = crcTable[(c ^ byte) & 255] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
 }
-export async function runPrivacyJobs(s:Services){
- await connection(s,db=>db.query(`UPDATE privacy_requests p SET status='RECEIVED',user_visible_note='负责人关系已处理，正在继续个人数据删除。' WHERE p.type='DELETE' AND p.scope='SELF_ACCOUNT' AND p.status='NEEDS_ACTION' AND NOT EXISTS(SELECT 1 FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE g.user_id=p.user_id AND g.status='ACTIVE')`));
- const jobs=await transaction(s,async db=>{const result=await rows(db,`SELECT * FROM privacy_requests WHERE type IN ('EXPORT','DELETE') AND status IN ('RECEIVED','VERIFYING','PROCESSING','FAILED_RETRYABLE') AND (lease_until IS NULL OR lease_until<now()) ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 3`);for(const p of result)await db.query(`UPDATE privacy_requests SET status='PROCESSING',assigned_at=COALESCE(assigned_at,now()),lease_until=now()+interval '10 minutes',attempts=attempts+1,version=version+1 WHERE id=$1`,[p.id]);return result;});
- for(const p of jobs){try{if(p.type==='EXPORT')await createExport(s,p);else if(p.scope==='FAMILY')await deleteFamily(s,p);else await deleteSubject(s,p);}catch(e:any){await connection(s,db=>db.query(`UPDATE privacy_requests SET status='FAILED_RETRYABLE',lease_until=now()+interval '5 minutes',user_visible_note='处理暂时遇到问题，系统会继续重试；原处理期限不变。',outcome_code=$2,version=version+1 WHERE id=$1 AND status<>'COMPLETED'`,[p.id,e instanceof Error&&'code'in e?String((e as any).code):'PROCESSING_FAILED']));}}
- const expired=await connection(s,db=>rows(db,'SELECT id,export_object_key FROM privacy_requests WHERE export_expires_at<=now() AND export_object_key IS NOT NULL'));for(const p of expired){await unlink(exportPath(s,p.exportObjectKey)).catch(()=>{});await connection(s,db=>db.query('UPDATE privacy_requests SET export_object_key=NULL WHERE id=$1',[p.id]));}await connection(s,db=>db.query('DELETE FROM export_read_grants WHERE expires_at<now()'));
+async function writeZip(path: string, entries: { name: string; data: Buffer }[]) {
+  const f = await open(path, 'wx', 0o600);
+  let offset = 0;
+  const directory: Buffer[] = [];
+  try {
+    for (const entry of entries) {
+      const name = Buffer.from(entry.name);
+      const crc = crc32(entry.data);
+      const size = entry.data.length;
+      const local = Buffer.alloc(30);
+      local.writeUInt32LE(0x04034b50);
+      local.writeUInt16LE(20, 4);
+      local.writeUInt16LE(0x800, 6);
+      local.writeUInt32LE(crc, 14);
+      local.writeUInt32LE(size, 18);
+      local.writeUInt32LE(size, 22);
+      local.writeUInt16LE(name.length, 26);
+      await f.write(local);
+      await f.write(name);
+      await f.write(entry.data);
+      const central = Buffer.alloc(46);
+      central.writeUInt32LE(0x02014b50);
+      central.writeUInt16LE(20, 4);
+      central.writeUInt16LE(20, 6);
+      central.writeUInt16LE(0x800, 8);
+      central.writeUInt32LE(crc, 16);
+      central.writeUInt32LE(size, 20);
+      central.writeUInt32LE(size, 24);
+      central.writeUInt16LE(name.length, 28);
+      central.writeUInt32LE(offset, 42);
+      directory.push(Buffer.concat([central, name]));
+      offset += local.length + name.length + size;
+    }
+    const start = offset;
+    for (const d of directory) {
+      await f.write(d);
+      offset += d.length;
+    }
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(offset - start, 12);
+    end.writeUInt32LE(start, 16);
+    await f.write(end);
+    await f.sync();
+  } finally {
+    await f.close();
+  }
+}
+function csv(items: any[]) {
+  if (!items.length) {
+    return '';
+  }
+  const keys = [...new Set(items.flatMap((x) => Object.keys(x)))];
+  const value = (v: any) => {
+    let text = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+    if (/^[=+@\-\t\r]/.test(text)) {
+      text = "'" + text;
+    }
+    return '"' + text.replace(/"/g, '""') + '"';
+  };
+  return (
+    '\uFEFF' +
+    [keys.map(value).join(','), ...items.map((x) => keys.map((k) => value(x[k])).join(','))].join(
+      '\r\n',
+    )
+  );
+}
+async function exportPermitted(db: Db, p: any) {
+  await one(db, `SELECT id FROM users WHERE id=$1 AND status='ACTIVE'`, [p.userId]);
+  if (p.familyId) {
+    const family = await one(
+      db,
+      `SELECT f.* FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE f.id=$1 AND g.user_id=$2 AND g.status='ACTIVE' AND f.status<>'DELETING'`,
+      [p.familyId, p.userId],
+    );
+    const deleting = await maybe(
+      db,
+      `SELECT 1 FROM privacy_requests pr WHERE pr.type='DELETE' AND pr.status='PROCESSING' AND (pr.family_id=$1 OR pr.scope='SELF_ACCOUNT' AND EXISTS(SELECT 1 FROM family_principals fp WHERE fp.family_id=$1 AND fp.user_id=pr.user_id))`,
+      [p.familyId],
+    );
+    if (deleting) {
+      fail(409, 'PRIVACY_SCOPE_PROCESSING', '相关资料正在删除，完成后重新生成导出');
+    }
+    return family.version;
+  }
+  return null;
+}
+async function createExport(s: Services, p: any) {
+  const data = await transaction(s, async (db) => {
+    await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [p.userId]);
+    if (p.familyId) {
+      await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [p.familyId]);
+    }
+    const user = await one(db, `SELECT * FROM users WHERE id=$1 AND status='ACTIVE'`, [p.userId]);
+    const familyVersion = await exportPermitted(db, p);
+    let tables: any;
+    let media: any[];
+    if (p.scope === 'FAMILY') {
+      const family = await one(
+        db,
+        `SELECT f.* FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE f.id=$1 AND g.user_id=$2 AND g.status='ACTIVE' AND f.status<>'DELETING'`,
+        [p.familyId, p.userId],
+      );
+      tables = {
+        family: [family],
+        children: (
+          await rows(db, 'SELECT * FROM child_profiles WHERE family_id=$1', [p.familyId])
+        ).map((c) => childView(c)),
+        guardians: await rows(
+          db,
+          `SELECT g.id,g.status,g.joined_at,u.display_name FROM guardian_memberships g JOIN users u ON u.id=g.user_id WHERE g.family_id=$1`,
+          [p.familyId],
+        ),
+        ...(await exportFamilyDomain(db, p.familyId)),
+        auditLogs: await rows(
+          db,
+          'SELECT id,child_id,action,source_id,details,created_at FROM audit_logs WHERE family_id=$1',
+          [p.familyId],
+        ),
+      };
+      media = await rows(
+        db,
+        `SELECT DISTINCT m.id,m.object_key FROM media_assets m JOIN submission_media sm ON sm.media_id=m.id WHERE m.family_id=$1 AND m.status='READY' AND m.retention_until>now()`,
+        [p.familyId],
+      );
+    } else {
+      tables = {
+        profile: [publicProfile(user)],
+        relationships: await rows(
+          db,
+          `SELECT p.kind,p.family_id,p.child_id,f.name AS family_name FROM family_principals p JOIN families f ON f.id=p.family_id WHERE p.user_id=$1`,
+          [p.userId],
+        ),
+        children: (
+          await rows(db, 'SELECT * FROM child_profiles WHERE bound_user_id=$1', [p.userId])
+        ).map((c) => childView(c, false)),
+        ...(await exportSubjectDomain(db, p.userId)),
+      };
+      media = await rows(
+        db,
+        `SELECT DISTINCT m.id,m.object_key FROM media_assets m JOIN child_profiles c ON c.id=m.child_id JOIN submission_media sm ON sm.media_id=m.id WHERE c.bound_user_id=$1 AND m.status='READY' AND m.retention_until>now()`,
+        [p.userId],
+      );
+    }
+    return { tables, media, familyVersion };
+  });
+  const entries: { name: string; data: Buffer }[] = [];
+  const counts: Record<string, number> = {};
+  for (const [key, table] of Object.entries(data.tables)) {
+    const items = table as any[];
+    counts[key] = items.length;
+    entries.push(
+      { name: `data/${key}.json`, data: Buffer.from(JSON.stringify(items, null, 2)) },
+      { name: `data/${key}.csv`, data: Buffer.from(csv(items)) },
+    );
+  }
+  for (const m of data.media) {
+    if (!/^[a-z]+\/[a-zA-Z0-9.-]+$/.test(m.objectKey)) {
+      throw new Error('UNSAFE_MEDIA_KEY');
+    }
+    try {
+      entries.push({
+        name: `photos/${m.id}.jpg`,
+        data: await readFile(join(s.config.mediaDir, m.objectKey)),
+      });
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+  const manifest = {
+    schemaVersion: '1.0',
+    generatedAt: new Date().toISOString(),
+    timezone: 'Asia/Shanghai',
+    scope: p.scope,
+    recordCounts: counts,
+    files: entries.map((e) => ({
+      path: e.name,
+      sizeBytes: e.data.length,
+      sha256: createHash('sha256').update(e.data).digest('hex'),
+    })),
+  };
+  entries.push({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2)) });
+  const key = `${randomUUID()}.zip`;
+  await writeZip(exportPath(s, key), entries);
+  try {
+    await transaction(s, async (db) => {
+      await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [p.userId]);
+      if (p.familyId) {
+        await db.query('SELECT id FROM families WHERE id=$1 FOR SHARE', [p.familyId]);
+      }
+      const currentVersion = await exportPermitted(db, p);
+      if (currentVersion !== data.familyVersion) {
+        fail(409, 'PRIVACY_SCOPE_CHANGED', '资料删除范围已改变，将重新生成导出');
+      }
+      const current = await one(db, 'SELECT * FROM privacy_requests WHERE id=$1 FOR UPDATE', [
+        p.id,
+      ]);
+      if (current.status !== 'PROCESSING') {
+        await unlink(exportPath(s, key)).catch(() => {});
+        return;
+      }
+      await db.query(
+        `UPDATE privacy_requests SET status='COMPLETED',export_object_key=$2,export_expires_at=now()+interval '7 days',completed_at=now(),lease_until=NULL,user_visible_note='导出已完成，文件保留7天；下载时仍会核验当前权限。',version=version+1 WHERE id=$1`,
+        [p.id, key],
+      );
+    });
+  } catch (error) {
+    await unlink(exportPath(s, key)).catch(() => {});
+    throw error;
+  }
+}
+async function removeFiles(s: Services, media: any[], exports: any[]) {
+  for (const m of media) {
+    for (const key of [m.objectKey, m.originalObjectKey].filter(Boolean)) {
+      const referenced = await connection(s, (db) =>
+        maybe(
+          db,
+          `SELECT id FROM media_assets WHERE object_key=$1 AND status NOT IN ('DELETING','DELETED')`,
+          [key],
+        ),
+      );
+      if (!referenced && /^[a-z]+\/[a-zA-Z0-9.-]+$/.test(key)) {
+        await unlink(join(s.config.mediaDir, key)).catch((e: any) => {
+          if (e.code !== 'ENOENT') {
+            throw e;
+          }
+        });
+      }
+    }
+  }
+  for (const e of exports) {
+    if (e.exportObjectKey) {
+      await unlink(exportPath(s, e.exportObjectKey)).catch((x: any) => {
+        if (x.code !== 'ENOENT') {
+          throw x;
+        }
+      });
+    }
+  }
+}
+async function deleteFamily(s: Services, p: any) {
+  const selected = await transaction(s, async (db) => {
+    await db.query('SELECT id FROM users WHERE id=$1 FOR SHARE', [p.userId]);
+    const f = await one(db, 'SELECT * FROM families WHERE id=$1 FOR UPDATE', [p.familyId]);
+    const owner = await one(db, 'SELECT * FROM guardian_memberships WHERE id=$1', [
+      f.ownerMembershipId,
+    ]);
+    if (owner.userId !== p.userId || !['ARCHIVED', 'DELETING'].includes(f.status)) {
+      fail(409, 'DELETE_SCOPE_CHANGED', '家庭删除授权状态已改变');
+    }
+    if (!(await getArchiveBlockers(db, p.familyId)).canArchive) {
+      fail(409, 'ARCHIVE_BLOCKED', '家庭仍有待处理事项');
+    }
+    await db.query(`UPDATE families SET status='DELETING' WHERE id=$1`, [p.familyId]);
+    await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE family_id=$1', [p.familyId]);
+    const media = await rows(
+      db,
+      `UPDATE media_assets SET status='DELETING' WHERE family_id=$1 RETURNING *`,
+      [p.familyId],
+    );
+    const exports = await rows(
+      db,
+      'SELECT * FROM privacy_requests WHERE family_id=$1 AND export_object_key IS NOT NULL',
+      [p.familyId],
+    );
+    await queueProtection(db, 'FAMILY_DELETED', { familyId: p.familyId, requestId: p.id });
+    return { media, exports };
+  });
+  await removeFiles(s, selected.media, selected.exports);
+  await transaction(s, async (db) => {
+    await db.query('SELECT id FROM families WHERE id=$1 FOR UPDATE', [p.familyId]);
+    await deleteFamilyDomain(db, p.familyId);
+    await db.query(
+      'DELETE FROM media_read_grants WHERE media_id IN (SELECT id FROM media_assets WHERE family_id=$1)',
+      [p.familyId],
+    );
+    await db.query(
+      'DELETE FROM media_jobs WHERE media_id IN (SELECT id FROM media_assets WHERE family_id=$1)',
+      [p.familyId],
+    );
+    await db.query('DELETE FROM family_principals WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM child_binding_applications WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM child_binding_invitations WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM join_applications WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM invitations WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM child_profiles WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM media_assets WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM child_drafts WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM audit_logs WHERE family_id=$1', [p.familyId]);
+    await db.query(
+      'DELETE FROM operation_records WHERE actor_scope LIKE $1 OR path LIKE $2 OR response::text LIKE $3',
+      [`%:${p.familyId}:%`, `%/families/${p.familyId}%`, `%${p.familyId}%`],
+    );
+    await db.query(
+      'UPDATE privacy_requests SET family_id=NULL,export_object_key=NULL,export_expires_at=NULL,confirmation=NULL WHERE family_id=$1',
+      [p.familyId],
+    );
+    await db.query('DELETE FROM guardian_memberships WHERE family_id=$1', [p.familyId]);
+    await db.query('DELETE FROM families WHERE id=$1', [p.familyId]);
+    await db.query(
+      `INSERT INTO deletion_tombstones(request_id,family_id_hash,backup_purge_due_at,clear_after) VALUES($1,$2,now()+interval '35 days',now()+interval '65 days')`,
+      [p.id, digest(p.familyId)],
+    );
+    await db.query(
+      `UPDATE privacy_requests SET status='COMPLETED',completed_at=now(),lease_until=NULL,user_visible_note='家庭在线资料、文本照片、计划奖励、账本订单及导出副本已删除。备份最多35天轮换清理。',outcome_code='ONLINE_DELETION_COMPLETED',version=version+1 WHERE id=$1`,
+      [p.id],
+    );
+  });
+}
+async function deleteSubject(s: Services, p: any) {
+  const selected = await transaction(s, async (db) => {
+    await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [p.userId]);
+    const owned = await maybe(
+      db,
+      `SELECT f.id FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE g.user_id=$1 AND g.status='ACTIVE'`,
+      [p.userId],
+    );
+    if (owned) {
+      await db.query(
+        `UPDATE privacy_requests SET status='NEEDS_ACTION',lease_until=NULL,user_visible_note='请先转让负责的家庭，或先归档并完成家庭在线数据删除；仅归档仍不满足条件。',version=version+1 WHERE id=$1`,
+        [p.id],
+      );
+      return null;
+    }
+    const families = await rows(
+      db,
+      'SELECT family_id FROM family_principals WHERE user_id=$1 ORDER BY family_id',
+      [p.userId],
+    );
+    for (const f of families) {
+      await db.query('SELECT id FROM families WHERE id=$1 FOR UPDATE', [f.familyId]);
+      await db.query('UPDATE families SET version=version+1 WHERE id=$1', [f.familyId]);
+    }
+    await db.query(
+      `UPDATE users SET status='DISABLED',security_version=security_version+1 WHERE id=$1`,
+      [p.userId],
+    );
+    await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1', [p.userId]);
+    const children = await rows(
+      db,
+      'SELECT id,family_id FROM child_profiles WHERE bound_user_id=$1',
+      [p.userId],
+    );
+    const media = await rows(
+      db,
+      `UPDATE media_assets SET status='DELETING' WHERE (purpose='USER_AVATAR' AND uploader_user_id=$1) OR child_id=ANY($2::uuid[]) RETURNING *`,
+      [p.userId, children.map((c) => c.id)],
+    );
+    const exports = await rows(
+      db,
+      'SELECT * FROM privacy_requests WHERE (user_id=$1 OR family_id=ANY($2::uuid[])) AND export_object_key IS NOT NULL',
+      [p.userId, families.map((f) => f.familyId)],
+    );
+    await db.query(
+      "UPDATE privacy_requests SET export_object_key=NULL,export_expires_at=NULL WHERE (user_id=$1 OR family_id=ANY($2::uuid[])) AND type='EXPORT'",
+      [p.userId, families.map((f) => f.familyId)],
+    );
+    await queueProtection(db, 'ACCOUNT_DELETED', {
+      userId: p.userId,
+      requestId: p.id,
+      childIds: children.map((c) => c.id),
+    });
+    return { media, exports, children };
+  });
+  if (!selected) {
+    return;
+  }
+  await removeFiles(s, selected.media, selected.exports);
+  await transaction(s, async (db) => {
+    await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [p.userId]);
+    const children = await rows(
+      db,
+      'SELECT id,family_id,avatar_media_id FROM child_profiles WHERE bound_user_id=$1 ORDER BY family_id,id',
+      [p.userId],
+    );
+    for (const f of [...new Set(children.map((c) => c.familyId))]) {
+      await db.query('SELECT id FROM families WHERE id=$1 FOR UPDATE', [f]);
+    }
+    await anonymizeSubjectDomain(db, p.userId);
+    for (const c of children) {
+      await db.query(
+        `UPDATE child_profiles SET nickname='已删除孩子资料',bound_user_id=NULL,binding_version=binding_version+1,version=version+1,age_band=NULL WHERE id=$1`,
+        [c.id],
+      );
+      await db.query('DELETE FROM completion_drafts WHERE child_id=$1', [c.id]);
+      await db.query(`UPDATE completion_submissions SET note='' WHERE child_id=$1`, [c.id]);
+      await db.query(
+        `UPDATE completion_decisions SET reason=NULL WHERE occurrence_id IN (SELECT id FROM activity_occurrences WHERE child_id=$1)`,
+        [c.id],
+      );
+      await db.query(`UPDATE point_ledger SET reason='已删除个人文本' WHERE child_id=$1`, [c.id]);
+      await db.query(
+        `UPDATE redemption_orders SET decision_reason=NULL,arrangement_note=NULL,fulfillment_note=NULL WHERE child_id=$1`,
+        [c.id],
+      );
+      await db.query(`UPDATE audit_logs SET details='{}' WHERE child_id=$1`, [c.id]);
+      await db.query(
+        `UPDATE auth_sessions SET revoked_at=now() WHERE child_id=$1 AND child_session_source='DIRECT'`,
+        [c.id],
+      );
+    }
+    await db.query('DELETE FROM family_principals WHERE user_id=$1', [p.userId]);
+    await db.query(
+      `UPDATE guardian_memberships SET status='REMOVED',removed_at=now(),version=version+1 WHERE user_id=$1 AND status='ACTIVE'`,
+      [p.userId],
+    );
+    await db.query('DELETE FROM auth_identities WHERE user_id=$1', [p.userId]);
+    await db.query('DELETE FROM pin_credentials WHERE user_id=$1', [p.userId]);
+    await db.query('DELETE FROM consent_records WHERE user_id=$1', [p.userId]);
+    await db.query(
+      'DELETE FROM auth_attempts WHERE response_ciphertext IS NOT NULL AND expires_at<now()',
+    );
+    await db.query(
+      "UPDATE users SET display_name='已删除账号',avatar_media_id=NULL,profile_completed_at=NULL,version=version+1 WHERE id=$1",
+      [p.userId],
+    );
+    await db.query(
+      "UPDATE media_assets SET status='DELETED',object_key=NULL,original_object_key=NULL,upload_hash=NULL,source_media_id=NULL WHERE id=ANY($1::uuid[])",
+      [selected.media.map((m) => m.id)],
+    );
+    await db.query("UPDATE audit_logs SET actor_user_id=NULL,details='{}' WHERE actor_user_id=$1", [
+      p.userId,
+    ]);
+    await db.query(
+      `UPDATE join_applications SET applicant_profile_snapshot='{}',status=CASE WHEN status='PENDING' THEN 'WITHDRAWN' ELSE status END WHERE applicant_user_id=$1`,
+      [p.userId],
+    );
+    await db.query(
+      `UPDATE child_binding_applications SET applicant_profile_snapshot='{}',status=CASE WHEN status='PENDING' THEN 'WITHDRAWN' ELSE status END WHERE applicant_user_id=$1`,
+      [p.userId],
+    );
+    await db.query(
+      `UPDATE operation_records SET response='{"redacted":true,"reason":"PRIVACY_DELETION"}'::jsonb WHERE response::text LIKE ANY($1::text[]) OR path LIKE ANY($2::text[])`,
+      [[`%${p.userId}%`, ...children.map((c) => `%${c.id}%`)], children.map((c) => `%${c.id}%`)],
+    );
+    await db.query('DELETE FROM operation_records WHERE actor_scope LIKE $1', [`${p.userId}:%`]);
+    await db.query(
+      'UPDATE privacy_requests SET export_object_key=NULL,export_expires_at=NULL,confirmation=NULL WHERE user_id=$1',
+      [p.userId],
+    );
+    await db.query(
+      `INSERT INTO deletion_tombstones(request_id,subject_hash,backup_purge_due_at,clear_after) VALUES($1,$2,now()+interval '35 days',now()+interval '65 days')`,
+      [p.id, digest(p.userId)],
+    );
+    await db.query(
+      `UPDATE privacy_requests SET status='COMPLETED',completed_at=now(),lease_until=NULL,outcome_code='ONLINE_DELETION_COMPLETED',user_visible_note='账号身份、头像及本人孩子敏感文本照片已删除，共同业务事实已去除账号关联。备份最多35天轮换清理。',version=version+1 WHERE id=$1`,
+      [p.id],
+    );
+  });
+}
+export async function runPrivacyJobs(s: Services) {
+  await connection(s, (db) =>
+    db.query(
+      `UPDATE privacy_requests p SET status='RECEIVED',user_visible_note='负责人关系已处理，正在继续个人数据删除。' WHERE p.type='DELETE' AND p.scope='SELF_ACCOUNT' AND p.status='NEEDS_ACTION' AND NOT EXISTS(SELECT 1 FROM families f JOIN guardian_memberships g ON g.id=f.owner_membership_id WHERE g.user_id=p.user_id AND g.status='ACTIVE')`,
+    ),
+  );
+  const jobs = await transaction(s, async (db) => {
+    const result = await rows(
+      db,
+      `SELECT * FROM privacy_requests WHERE type IN ('EXPORT','DELETE') AND status IN ('RECEIVED','VERIFYING','PROCESSING','FAILED_RETRYABLE') AND (lease_until IS NULL OR lease_until<now()) ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 3`,
+    );
+    for (const p of result) {
+      await db.query(
+        `UPDATE privacy_requests SET status='PROCESSING',assigned_at=COALESCE(assigned_at,now()),lease_until=now()+interval '10 minutes',attempts=attempts+1,version=version+1 WHERE id=$1`,
+        [p.id],
+      );
+    }
+    return result;
+  });
+  for (const p of jobs) {
+    try {
+      if (p.type === 'EXPORT') {
+        await createExport(s, p);
+      } else if (p.scope === 'FAMILY') {
+        await deleteFamily(s, p);
+      } else {
+        await deleteSubject(s, p);
+      }
+    } catch (e: any) {
+      await connection(s, (db) =>
+        db.query(
+          `UPDATE privacy_requests SET status='FAILED_RETRYABLE',lease_until=now()+interval '5 minutes',user_visible_note='处理暂时遇到问题，系统会继续重试；原处理期限不变。',outcome_code=$2,version=version+1 WHERE id=$1 AND status<>'COMPLETED'`,
+          [p.id, e instanceof Error && 'code' in e ? String((e as any).code) : 'PROCESSING_FAILED'],
+        ),
+      );
+    }
+  }
+  const expired = await connection(s, (db) =>
+    rows(
+      db,
+      'SELECT id,export_object_key FROM privacy_requests WHERE export_expires_at<=now() AND export_object_key IS NOT NULL',
+    ),
+  );
+  for (const p of expired) {
+    await unlink(exportPath(s, p.exportObjectKey)).catch(() => {});
+    await connection(s, (db) =>
+      db.query('UPDATE privacy_requests SET export_object_key=NULL WHERE id=$1', [p.id]),
+    );
+  }
+  await connection(s, (db) => db.query('DELETE FROM export_read_grants WHERE expires_at<now()'));
 }
